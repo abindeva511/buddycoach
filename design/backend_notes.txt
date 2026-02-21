@@ -1,0 +1,41 @@
+Local sertup:
+python -m venv ven
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\venv\Scripts\Activate.ps1
+
+C:\Users\aravi\AppData\Local\Programs\Python\Python313\python.exe -m uvicorn app.main:app --reload
+
+unit test : C:/Users/aravi/AppData/Local/Programs/Python/Python313/python.exe -m pytest back_end/tests -q
+
+database:
+user : root/password , admin/admin
+
+React Native + Expo for front end
+
+
+Fast API - backend
+
+high level
+I want to build a backend system with Fast API. It needs following functionality  
+
+1. Supports user management and authenticatiobn for apis with just username and password - Build this with the default fuctionalities provided by FAst api. Provided details about the best approach.
+2. Add a file upload api. This will be used for uploading files to aws s3 - record of the saved in sql DB
+3. Need a api call - analysis_request
+	It has following parametes
+	upload_id : This call sends the id of the uploaded file.
+	type :  Type of the analysis
+	It returns the analysis as text
+	
+I am thinking of using mysql DB.
+Tables:
+user and authentication realted tables - this structure will be based on FastAPI authentiaction support
+file table : stores the deatils about the file. Eg user_id, file path in object store, file_id and other important details about the file that needs to be stored.
+analysis_request table : This table stores the details of the analysis request
+request_id
+user_id // to map to the user
+file_id // to map to the file table
+analysis_report // the analysis report
+
+Also and the defaults columns in the tables like created_at , updated_at etc as required.
+
+Prepare a full design for a backend system as per the above requirements

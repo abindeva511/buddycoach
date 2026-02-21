@@ -14,8 +14,7 @@ def _register_and_login(client, username="alice", password="password123"):
     )
     assert login_response.status_code == 200
 
-    token = login_response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    return login_response.json()
 
 
 @pytest.fixture
@@ -63,6 +62,47 @@ def test_login_invalid_credentials(client):
     assert response.json()["detail"] == "Invalid credentials"
 
 
+def test_login_returns_refresh_token(client):
+    _register_and_login(client, username="token-user", password="secret123")
+    response = client.post(
+        "/api/v1/auth/login",
+        data={"username": "token-user", "password": "secret123"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "access_token" in body
+    assert "refresh_token" in body
+    assert body["token_type"] == "bearer"
+    assert body["expires_in"] > 0
+    assert body["refresh_expires_in"] > 0
+
+
+def test_refresh_token_happy_path(client):
+    tokens = _register_and_login(client, username="refresh-user", password="secret123")
+    response = client.post(
+        "/api/v1/auth/refresh-token",
+        json={"refresh_token": tokens["refresh_token"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "access_token" in body
+    assert body["token_type"] == "bearer"
+    assert body["expires_in"] > 0
+
+
+def test_refresh_token_rejects_access_token(client):
+    tokens = _register_and_login(client, username="reject-user", password="secret123")
+    response = client.post(
+        "/api/v1/auth/refresh-token",
+        json={"refresh_token": tokens["access_token"]},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid refresh token"
+
+
 def test_upload_requires_auth(client):
     response = client.post(
         "/api/v1/files",
@@ -74,7 +114,8 @@ def test_upload_requires_auth(client):
 
 @pytest.mark.usefixtures("stub_external")
 def test_analyze_happy_path(client):
-    headers = _register_and_login(client)
+    tokens = _register_and_login(client)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
     upload_response = client.post(
         "/api/v1/files",
@@ -98,7 +139,8 @@ def test_analyze_happy_path(client):
 
 @pytest.mark.usefixtures("stub_external")
 def test_analyze_file_not_found(client):
-    headers = _register_and_login(client)
+    tokens = _register_and_login(client)
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
     response = client.post(
         "/api/v1/analysis",

@@ -1,7 +1,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { getRefreshToken, deleteRefreshToken } from "./storage";
 
-const BASE_URL = "http://127.0.0.1:8000/"; // TODO: check how we can make this configurable
+const BASE_URL = "http://54.159.33.72/";
 
 const api = axios.create({
   baseURL: BASE_URL,

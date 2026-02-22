@@ -48,3 +48,25 @@ pip-wheel-metadata/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Client (React/Expo)
+client/node_modules/
+client/.expo/
+client/web-build/
+client/.kotlin/
+client/.metro-health-check*
+client/npm-debug.*
+client/yarn-debug.*
+client/yarn-error.*
+client/expo-env.d.ts
+client/*.tsbuildinfo
+client/*.orig.*
+client/*.jks
+client/*.p8
+client/*.p12
+client/*.key
+client/*.mobileprovision
+client/*.pem
+client/ios/
+client/android/
+client/.env*.local

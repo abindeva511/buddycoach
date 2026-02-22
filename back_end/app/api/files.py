@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, Depends
+from fastapi import APIRouter, UploadFile, Depends, File as FastAPIFile
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.api.deps import get_current_user
@@ -8,7 +8,7 @@ from app.utils.s3 import upload_file
 router = APIRouter(prefix="/files", tags=["files"])
 
 @router.post("")
-def upload(user=Depends(get_current_user), db: Session = Depends(get_db), file: UploadFile = None):
+def upload(user=Depends(get_current_user), db: Session = Depends(get_db), file: UploadFile = FastAPIFile(...)):
 
     key = upload_file(file.file, user.id, file.filename)
 

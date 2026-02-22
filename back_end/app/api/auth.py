@@ -61,7 +61,7 @@ def refresh_token(payload: RefreshTokenRequest, db: Session = Depends(get_db)):
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    user = db.get(User, int(user_id))
+    user = db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 

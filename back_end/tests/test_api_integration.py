@@ -145,7 +145,7 @@ def test_analyze_file_not_found(client):
     response = client.post(
         "/api/v1/analysis",
         headers=headers,
-        json={"file_id": 9999, "analysis_type": "summary"},
+        json={"file_id": "00000000-0000-0000-0000-000000000000", "analysis_type": "summary"},
     )
 
     assert response.status_code == 404

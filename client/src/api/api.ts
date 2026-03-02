@@ -3,19 +3,27 @@ import { getRefreshToken, deleteRefreshToken } from "./storage";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 
-// Get the local IP address for mobile - fall back to localhost for web
+// EC2 backend URL — update this when the EC2 IP changes
+const EC2_URL = "http://13.219.227.121:8000";
+
 const getBaseUrl = () => {
-  if (Platform.OS === 'web') {
-    return "http://localhost:8000";
-  }
-  // For mobile, use your computer's IP address
-  // You can also use Constants.expoConfig?.hostUri to get it dynamically
-  const debuggerHost = Constants.expoConfig?.hostUri?.split(':')[0];
+  const USE_EC2 = false;
+  if (USE_EC2) return EC2_URL;
+
+  // On a physical device, localhost won't reach your Mac.
+  // Expo exposes the dev server host — reuse that IP for the backend.
+  const debuggerHost =
+    Constants.expoConfig?.hostUri ??          // SDK 46+
+    (Constants.manifest2 as any)?.extra?.expoGo?.debuggerHost ?? // older SDK
+    (Constants.manifest as any)?.debuggerHost; // SDK 45 and below
+
   if (debuggerHost) {
-    return `http://${debuggerHost}:8000`;
+    const ip = debuggerHost.split(":")[0];    // strip port
+    return `http://${ip}:8000`;
   }
-  // Fallback to explicit IP
-  return "http://100.112.148.211:8000";
+
+  // Fallback — web browser / simulator on same machine
+  return "http://localhost:8000";
 };
 
 const BASE_URL = getBaseUrl();

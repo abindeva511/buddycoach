@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Platform,
   Image,
+  ScrollView,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -94,9 +95,8 @@ export default function UploadScreen({ route, navigation }: Props) {
 
       const upload = await api.post("/api/v1/files", formData);
 
-      const analysis = await api.post("/api/v1/analysis", {
+      const analysis = await api.post("/api/v1/analysis/pose3d", {
         file_id: upload.data.id,
-        analysis_type: workout,
       });
 
       navigation.replace("Result", { result: analysis.data });
@@ -122,7 +122,11 @@ export default function UploadScreen({ route, navigation }: Props) {
       </View>
 
       {/* Content */}
-      <View style={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.iconContainer}>
           <Text style={styles.emoji}>{info.emoji}</Text>
         </View>
@@ -181,7 +185,7 @@ export default function UploadScreen({ route, navigation }: Props) {
             )}
           </TouchableOpacity>
         )}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -218,9 +222,10 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     padding: 24,
     alignItems: "center",
+    paddingBottom: 40,
   },
   iconContainer: {
     width: 80,

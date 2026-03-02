@@ -25,6 +25,7 @@ export type DrawerParamList = {
 export interface AnalysisResponse {
   analysis_id: string;
   processing_time_seconds: number;
-  result: string;
+  result?: string;
   analysis_type?: string;
+  download_url?: string;  // present for pose3d analyses
 }

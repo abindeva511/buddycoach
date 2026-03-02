@@ -5,7 +5,9 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
+  Platform,
 } from "react-native";
+import api from "../api/api";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/types";
 import { colors, shadows } from "../theme/colors";
@@ -17,6 +19,30 @@ export default function ResultScreen({ route, navigation }: Props) {
 
   // Calculate a simple score based on result (placeholder logic)
   const score = Math.floor(Math.random() * 20) + 80; // 80-100 for demo
+
+  const downloadNpy = async () => {
+    if (!result.download_url) return;
+    try {
+      // Fetch the file via the authenticated Axios instance (includes Bearer token)
+      const response = await api.get(result.download_url, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([response.data], { type: 'application/octet-stream' });
+      if (Platform.OS === 'web') {
+        // Trigger browser file-save dialog
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `pose3d_${result.analysis_id ?? 'result'}.npz`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (e: any) {
+      console.error('Download failed:', e.message);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -88,6 +114,17 @@ export default function ResultScreen({ route, navigation }: Props) {
 
         {/* Actions */}
         <View style={styles.actions}>
+          {/* Download 3D pose data if available */}
+          {result.download_url && (
+            <TouchableOpacity
+              style={styles.downloadButton}
+              onPress={downloadNpy}
+            >
+              <Text style={styles.downloadButtonIcon}>⬇️</Text>
+              <Text style={styles.downloadButtonText}>Download 3D Pose Data (.npz)</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={styles.primaryButton}
             onPress={() => navigation.navigate("Home")}
@@ -290,5 +327,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: colors.textSecondary,
+  },
+  downloadButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1a1a2e",
+    paddingVertical: 18,
+    borderRadius: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  downloadButtonIcon: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  downloadButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: colors.primary,
   },
 });

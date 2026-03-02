@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, files, analysis
+from app.api import auth, files, analysis, exercises
 from app.db.base import Base
 from app.db.session import engine
 
@@ -40,3 +40,4 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(files.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
+app.include_router(exercises.router, prefix="/api/v1")

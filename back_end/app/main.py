@@ -18,32 +18,19 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Analysis Backend")
 
-allowed_origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:8081",
-    "http://127.0.0.1:8081",
-    "http://localhost:8082",
-    "http://127.0.0.1:8082",
-    "http://localhost:8083",
-    "http://127.0.0.1:8083",
-    "http://localhost:8084",
-    "http://127.0.0.1:8084",
-    "http://localhost:19000",
-    "http://127.0.0.1:19000",
-    "http://localhost:19006",
-    "http://127.0.0.1:19006",
-    "http://54.159.33.72",
-    "http://54.159.33.72:80",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health():
+    """Health check endpoint — confirms the server is up."""
+    return {"status": "ok"}
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(files.router, prefix="/api/v1")

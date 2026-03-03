@@ -4,10 +4,10 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 
 // EC2 backend URL — update this when the EC2 IP changes
-const EC2_URL = "http://13.219.227.121:8000";
+const EC2_URL = "http://54.80.240.3:8000";
 
 const getBaseUrl = () => {
-  const USE_EC2 = false;
+  const USE_EC2 = true;
   if (USE_EC2) return EC2_URL;
 
   // On a physical device, localhost won't reach your Mac.

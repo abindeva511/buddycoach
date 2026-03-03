@@ -19,7 +19,12 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 import tempfile
+
+# Use the same Python interpreter that's running this code so subprocess
+# calls inherit the correct conda / venv environment.
+_PY = sys.executable
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +99,7 @@ def run_pipeline(video_bytes: bytes, stem: str = "input") -> bytes:
 
         # Step 2: 2D keypoint detection with Detectron2
         _run(
-            "python infer_video_d2.py "
+            f"{_PY} infer_video_d2.py "
             "--cfg COCO-Keypoints/keypoint_rcnn_R_101_FPN_3x.yaml "
             f"--output-dir {out_dir} "
             "--image-ext mp4 "
@@ -104,14 +109,14 @@ def run_pipeline(video_bytes: bytes, stem: str = "input") -> bytes:
 
         # Step 3: prepare custom 2D dataset
         _run(
-            f"python prepare_data_2d_custom.py -i {out_dir} -o myvideos",
+            f"{_PY} prepare_data_2d_custom.py -i {out_dir} -o myvideos",
             cwd=_DATA_DIR,
         )
 
         # Step 4: export raw 3D pose data (.npz)
         export_base = os.path.join(job_dir, stem)
         _run(
-            "python run.py "
+            f"{_PY} run.py "
             "-d custom -k myvideos "
             "-arc 3,3,3,3,3 "
             f"-c checkpoint --evaluate {_PRETRAINED} "

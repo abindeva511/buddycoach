@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     AWS_REGION: str
     AWS_S3_BUCKET: str
 
+    POSE_WORK_DIR: str = "/tmp/videopose3d"
+
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()

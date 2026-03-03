@@ -103,7 +103,7 @@ def get_exercises_by_muscle(
         .limit(limit)
         .all()
     )
-    # Add has_video flag based on video_path existence
+    # Add has_video flag based on video_path or video_url existence
     result = []
     for ex in exercises:
         ex_dict = {
@@ -115,7 +115,10 @@ def get_exercises_by_muscle(
             "exercise_url": ex.exercise_url,
             "video_url": ex.video_url,
             "video_path": ex.video_path,
-            "has_video": bool(ex.video_path and ex.video_path.strip())
+            "has_video": bool(
+                (ex.video_path and ex.video_path.strip()) or
+                (ex.video_url and ex.video_url.strip())
+            )
         }
         result.append(ex_dict)
     return result
@@ -172,22 +175,28 @@ def get_exercise(exercise_id: int, db: Session = Depends(get_exercises_db)):
         "exercise_url": exercise.exercise_url,
         "video_url": exercise.video_url,
         "video_path": exercise.video_path,
-        "has_video": bool(exercise.video_path and exercise.video_path.strip())
+        "has_video": bool(
+            (exercise.video_path and exercise.video_path.strip()) or
+            (exercise.video_url and exercise.video_url.strip())
+        )
     }
 
 
 @router.get("/{exercise_id}/video")
 def get_exercise_video(exercise_id: int, db: Session = Depends(get_exercises_db)):
-    """Stream exercise video file"""
+    """Stream exercise video file or redirect to video_url"""
+    from fastapi.responses import RedirectResponse
     exercise = db.query(ExerciseDB).filter(ExerciseDB.id == exercise_id).first()
     if not exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
-    
-    if not exercise.video_path or not os.path.exists(exercise.video_path):
-        raise HTTPException(status_code=404, detail="Video not found")
-    
-    return FileResponse(
-        exercise.video_path,
-        media_type="video/mp4",
-        filename=f"{exercise.exercise_name}.mp4"
-    )
+
+    # Serve local file first, fall back to video_url redirect
+    if exercise.video_path and os.path.exists(exercise.video_path):
+        return FileResponse(
+            exercise.video_path,
+            media_type="video/mp4",
+            filename=f"{exercise.exercise_name}.mp4"
+        )
+    if exercise.video_url and exercise.video_url.strip():
+        return RedirectResponse(url=exercise.video_url, status_code=302)
+    raise HTTPException(status_code=404, detail="Video not found")

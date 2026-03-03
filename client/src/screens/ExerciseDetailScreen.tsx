@@ -441,7 +441,11 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
     },
   });
 
-  const videoUrl = exercise.has_video ? exerciseApi.getVideoUrl(exercise.id) : null;
+  // Use video_url (YouTube embed) directly when available, fall back to streaming endpoint
+  const isYouTube = (url: string | null) => !!(url && url.includes('youtube.com'));
+  const videoUrl = exercise.has_video
+    ? (exercise.video_url || exerciseApi.getVideoUrl(exercise.id))
+    : null;
 
   // Debug log
   const handlePlaybackStatusUpdate = (status: AVPlaybackStatus) => {
@@ -760,14 +764,19 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
                 <View ref={refZP.containerRef} style={styles.comparisonVideoBox} {...refZP.panHandlers}>
                   <View ref={refZP.wrapperRef} style={styles.zoomWrapper}>
                     {exercise.has_video && videoUrl ? (
-                      <Video
-                        ref={videoRef}
-                        source={{ uri: videoUrl }}
-                        style={styles.comparisonVideo}
-                        resizeMode={ResizeMode.CONTAIN}
-                        isLooping={!syncMode}
-                        onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
-                      />
+                      isYouTube(videoUrl) && Platform.OS === 'web' ? (
+                        // @ts-ignore
+                        <iframe src={videoUrl} style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8 }} allow="autoplay; encrypted-media" allowFullScreen />
+                      ) : (
+                        <Video
+                          ref={videoRef}
+                          source={{ uri: videoUrl }}
+                          style={styles.comparisonVideo}
+                          resizeMode={ResizeMode.CONTAIN}
+                          isLooping={!syncMode}
+                          onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
+                        />
+                      )
                     ) : (
                       <View style={styles.noComparisonVideo}>
                         <Text style={styles.noVideoEmoji}>🎬</Text>
@@ -973,47 +982,62 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
               {exercise.has_video && videoUrl ? (
                 <>
                   <View ref={singleZP.wrapperRef} style={styles.zoomWrapper}>
-                    <Video
-                      ref={videoRef}
-                      source={{ uri: videoUrl }}
-                      style={styles.video}
-                      // @ts-ignore - videoStyle is supported on web
-                      videoStyle={Platform.OS === 'web' ? { 
-                        width: '100%', 
-                        height: '100%',
-                        objectFit: 'contain',
-                        objectPosition: 'center',
-                      } as any : undefined}
-                      resizeMode={ResizeMode.CONTAIN}
-                      isLooping
-                      onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
-                      onError={(e) => handleVideoError(String(e))}
+                    {isYouTube(videoUrl) && Platform.OS === 'web' ? (
+                      // @ts-ignore
+                      <iframe
+                        src={videoUrl}
+                        style={{ width: '100%', height: VIDEO_HEIGHT, border: 'none', borderRadius: 8 }}
+                        allow="autoplay; encrypted-media"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <Video
+                        ref={videoRef}
+                        source={{ uri: videoUrl }}
+                        style={styles.video}
+                        // @ts-ignore - videoStyle is supported on web
+                        videoStyle={Platform.OS === 'web' ? { 
+                          width: '100%', 
+                          height: '100%',
+                          objectFit: 'contain',
+                          objectPosition: 'center',
+                        } as any : undefined}
+                        resizeMode={ResizeMode.CONTAIN}
+                        isLooping
+                        onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
+                        onError={(e) => handleVideoError(String(e))}
+                      />
+                    )}
+                  </View>
+                  {/* Hide zoom/rotate controls over YouTube iframe */}
+                  {!isYouTube(videoUrl) && (
+                    // @ts-ignore
+                    <View style={styles.zoomOverlay} data-zoom-overlay="1">
+                      <TouchableOpacity
+                        style={[styles.zoomBtn, singleZP.displayScale <= ZOOM_MIN && styles.zoomBtnDisabled]}
+                        onPress={singleZP.zoomOut}
+                        disabled={singleZP.displayScale <= ZOOM_MIN}
+                      >
+                        <Text style={styles.zoomBtnText}>−</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.zoomLabel}>{Math.round(singleZP.displayScale * 100)}%</Text>
+                      <TouchableOpacity
+                        style={[styles.zoomBtn, singleZP.displayScale >= ZOOM_MAX && styles.zoomBtnDisabled]}
+                        onPress={singleZP.zoomIn}
+                        disabled={singleZP.displayScale >= ZOOM_MAX}
+                      >
+                        <Text style={styles.zoomBtnText}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {!isYouTube(videoUrl) && (
+                    <RotateOverlay
+                      zp={singleZP}
+                      editValue={singleAngleEdit}
+                      {...makeAngleHandlers(singleZP, setSingleAngleEdit)}
                     />
-                  </View>
-                  // @ts-ignore
-                  <View style={styles.zoomOverlay} data-zoom-overlay="1">
-                    <TouchableOpacity
-                      style={[styles.zoomBtn, singleZP.displayScale <= ZOOM_MIN && styles.zoomBtnDisabled]}
-                      onPress={singleZP.zoomOut}
-                      disabled={singleZP.displayScale <= ZOOM_MIN}
-                    >
-                      <Text style={styles.zoomBtnText}>−</Text>
-                    </TouchableOpacity>
-                    <Text style={styles.zoomLabel}>{Math.round(singleZP.displayScale * 100)}%</Text>
-                    <TouchableOpacity
-                      style={[styles.zoomBtn, singleZP.displayScale >= ZOOM_MAX && styles.zoomBtnDisabled]}
-                      onPress={singleZP.zoomIn}
-                      disabled={singleZP.displayScale >= ZOOM_MAX}
-                    >
-                      <Text style={styles.zoomBtnText}>+</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <RotateOverlay
-                    zp={singleZP}
-                    editValue={singleAngleEdit}
-                    {...makeAngleHandlers(singleZP, setSingleAngleEdit)}
-                  />
-                  {isLoading && (
+                  )}
+                  {isLoading && !isYouTube(videoUrl) && (
                     <View style={styles.videoLoading}>
                       <ActivityIndicator size="large" color={colors.accent} />
                       <Text style={styles.loadingText}>Loading video...</Text>

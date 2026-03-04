@@ -86,29 +86,26 @@ set -e
 
 echo "--- [1/7] System packages ---"
 sudo apt-get update -q
-sudo apt-get install -y -q ffmpeg git python3-pip python3-venv libgl1
+sudo apt-get install -y -q ffmpeg git python3-pip python3-venv libgl1 wget build-essential
 
-echo "--- [2/7] Conda environment ---"
-# Use conda from Deep Learning AMI
-source /opt/conda/etc/profile.d/conda.sh 2>/dev/null || true
-
-# Create dedicated env if it doesn't exist
-if ! conda env list | grep -q "buddycoach"; then
-  conda create -y -n buddycoach python=3.10
+echo "--- [2/7] Python virtual environment ---"
+# Create dedicated venv
+if [ ! -d ~/buddycoach_venv ]; then
+  python3 -m venv ~/buddycoach_venv
+  echo "  venv created"
 fi
-conda activate buddycoach
+source ~/buddycoach_venv/bin/activate
 
 echo "--- [3/7] PyTorch + CUDA ---"
-# Deep Learning AMI has PyTorch, but ensure it's in our env
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 -q
+pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 echo "--- [4/7] Detectron2 ---"
 python -c "import detectron2" 2>/dev/null && echo "  detectron2 already installed" || \
-  pip install 'git+https://github.com/facebookresearch/detectron2.git' -q
+  pip install -q 'git+https://github.com/facebookresearch/detectron2.git'
 
 echo "--- [5/7] FastAPI backend dependencies ---"
 pip install -r $REMOTE_DIR/requirements.txt -q
-pip install opencv-python-headless -q  # headless for server use
+pip install opencv-python-headless -q
 
 echo "--- [6/7] VideoPose3D model ---"
 POSE_DIR=/home/ubuntu/videopose3d
@@ -123,6 +120,7 @@ fi
 mkdir -p \$POSE_DIR/VideoPose3D/checkpoint
 CKPT="\$POSE_DIR/VideoPose3D/checkpoint/pretrained_h36m_detectron_coco.bin"
 if [ ! -f "\$CKPT" ]; then
+  echo "  Downloading pretrained model (this may take a while)..."
   wget -q https://dl.fbaipublicfiles.com/video-pose-3d/pretrained_h36m_detectron_coco.bin -O \$CKPT
   echo "  Pretrained model downloaded"
 else
@@ -143,7 +141,7 @@ ENVEOF
 echo "  .env written"
 
 echo "--- [systemd] Creating buddycoach service ---"
-CONDA_PYTHON=\$(conda run -n buddycoach which python)
+VENV_PYTHON=/home/ubuntu/buddycoach_venv/bin/python
 
 sudo tee /etc/systemd/system/buddycoach.service > /dev/null << SVCEOF
 [Unit]
@@ -154,7 +152,7 @@ After=network.target
 User=ubuntu
 WorkingDirectory=$REMOTE_DIR
 EnvironmentFile=$REMOTE_DIR/.env
-ExecStart=\$CONDA_PYTHON -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+ExecStart=/home/ubuntu/buddycoach_venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 StandardOutput=journal

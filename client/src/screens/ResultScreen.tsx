@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   ScrollView,
@@ -6,7 +6,9 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  ActivityIndicator,
 } from "react-native";
+import { Video, ResizeMode } from "expo-av";
 import api from "../api/api";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/types";
@@ -16,24 +18,33 @@ type Props = NativeStackScreenProps<RootStackParamList, "Result">;
 
 export default function ResultScreen({ route, navigation }: Props) {
   const { result } = route.params;
+  const [isLoadingVideo, setIsLoadingVideo] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
 
   // Calculate a simple score based on result (placeholder logic)
   const score = Math.floor(Math.random() * 20) + 80; // 80-100 for demo
 
-  const downloadNpy = async () => {
-    if (!result.download_url) return;
+  // Support both old and new API response formats
+  const poseDownloadUrl = result.pose_download_url || result.download_url;
+  const videoDownloadUrl = result.video_download_url;
+  const videoAvailable = result.video_available === true;
+
+  const downloadFile = async (downloadUrl: string, filename: string) => {
+    if (!downloadUrl) return;
     try {
       // Fetch the file via the authenticated Axios instance (includes Bearer token)
-      const response = await api.get(result.download_url, {
+      const response = await api.get(downloadUrl, {
         responseType: 'blob',
       });
-      const blob = new Blob([response.data], { type: 'application/octet-stream' });
       if (Platform.OS === 'web') {
         // Trigger browser file-save dialog
+        const blob = new Blob([response.data], { 
+          type: filename.endsWith('.mp4') ? 'video/mp4' : 'application/octet-stream' 
+        });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `pose3d_${result.analysis_id ?? 'result'}.npz`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -42,6 +53,39 @@ export default function ResultScreen({ route, navigation }: Props) {
     } catch (e: any) {
       console.error('Download failed:', e.message);
     }
+  };
+
+  // Load preview of rendered video
+  const loadVideoPreview = async () => {
+    if (!videoDownloadUrl) return;
+    try {
+      setIsLoadingVideo(true);
+      const response = await api.get(videoDownloadUrl, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([response.data], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      setVideoUrl(url);
+    } catch (e: any) {
+      console.error('Failed to load video preview:', e.message);
+    } finally {
+      setIsLoadingVideo(false);
+    }
+  };
+
+  // Auto-load video preview when component mounts
+  useEffect(() => {
+    if (videoAvailable && videoDownloadUrl) {
+      loadVideoPreview();
+    }
+  }, [videoAvailable, videoDownloadUrl]);
+
+  const downloadNpy = async () => {
+    await downloadFile(poseDownloadUrl, `pose3d_${result.analysis_id ?? 'result'}.npz`);
+  };
+
+  const downloadVideo = async () => {
+    await downloadFile(videoDownloadUrl, `pose_visualization_${result.analysis_id ?? 'result'}.mp4`);
   };
 
   return (
@@ -56,6 +100,38 @@ export default function ResultScreen({ route, navigation }: Props) {
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
       >
+        {/* Video Preview Section */}
+        {videoAvailable && (
+          <View style={styles.videoPreviewSection}>
+            <Text style={styles.videoPreviewTitle}>Your Analysis Result</Text>
+            {videoUrl ? (
+              <View style={styles.videoContainer}>
+                <Video
+                  source={{ uri: videoUrl }}
+                  style={styles.videoPlayer}
+                  resizeMode={ResizeMode.CONTAIN}
+                  useNativeControls
+                  isLooping={false}
+                />
+              </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.loadVideoButton}
+                onPress={loadVideoPreview}
+                disabled={isLoadingVideo}
+              >
+                {isLoadingVideo ? (
+                  <ActivityIndicator color={colors.primary} />
+                ) : (
+                  <>
+                    <Text style={styles.loadVideoIcon}>🎬</Text>
+                    <Text style={styles.loadVideoText}>Load Video Preview</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
         {/* Score Card */}
         <View style={styles.scoreCard}>
           <View style={styles.scoreCircle}>
@@ -114,13 +190,24 @@ export default function ResultScreen({ route, navigation }: Props) {
 
         {/* Actions */}
         <View style={styles.actions}>
+          {/* Download Rendered Video with Pose Overlay */}
+          {videoAvailable && videoDownloadUrl && (
+            <TouchableOpacity
+              style={styles.downloadButtonVideo}
+              onPress={downloadVideo}
+            >
+              <Text style={styles.downloadButtonIcon}>🎬</Text>
+              <Text style={styles.downloadButtonVideoText}>Download Pose Video (.mp4)</Text>
+            </TouchableOpacity>
+          )}
+
           {/* Download 3D pose data if available */}
-          {result.download_url && (
+          {poseDownloadUrl && (
             <TouchableOpacity
               style={styles.downloadButton}
               onPress={downloadNpy}
             >
-              <Text style={styles.downloadButtonIcon}>⬇️</Text>
+              <Text style={styles.downloadButtonIcon}>📊</Text>
               <Text style={styles.downloadButtonText}>Download 3D Pose Data (.npz)</Text>
             </TouchableOpacity>
           )}
@@ -339,12 +426,74 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primary,
   },
+  downloadButtonVideo: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1a2e2e",
+    paddingVertical: 18,
+    borderRadius: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#00cc88",
+  },
   downloadButtonIcon: {
     fontSize: 20,
     marginRight: 8,
   },
   downloadButtonText: {
     fontSize: 16,
+    fontWeight: "600",
+    color: colors.primary,
+  },
+  downloadButtonVideoText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#00cc88",
+  },
+  videoPreviewSection: {
+    backgroundColor: colors.backgroundCard,
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 24,
+    overflow: "hidden",
+  },
+  videoPreviewTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: colors.textPrimary,
+    marginBottom: 16,
+  },
+  videoContainer: {
+    width: "100%",
+    aspectRatio: 16 / 9,
+    backgroundColor: "#000",
+    borderRadius: 12,
+    overflow: "hidden",
+    marginBottom: 12,
+  },
+  videoPlayer: {
+    width: "100%",
+    height: "100%",
+  },
+  loadVideoButton: {
+    width: "100%",
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    backgroundColor: colors.backgroundLight,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: colors.border,
+    borderStyle: "dashed",
+  },
+  loadVideoIcon: {
+    fontSize: 32,
+    marginBottom: 8,
+  },
+  loadVideoText: {
+    fontSize: 14,
     fontWeight: "600",
     color: colors.primary,
   },

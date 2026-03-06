@@ -17,7 +17,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    init();
+    (async () => {
+      console.log('AuthProvider: forcing logout');
+      await logout(); // Properly await token deletion
+      setLoading(false);
+    })();
   }, []);
 
   const init = async () => {

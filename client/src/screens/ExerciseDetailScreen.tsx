@@ -386,8 +386,13 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
       const target = e.target as HTMLInputElement;
       const file = target.files?.[0];
       if (file) {
-        setUserVideoFile(file);
-        setUserVideo(URL.createObjectURL(file));
+        const videoUri = URL.createObjectURL(file);
+        // Navigate to VideoReviewScreen with the selected video
+        navigation.navigate('VideoReview', {
+          videoUri,
+          videoFile: file,
+          exercise,
+        });
       }
       // Reset so same file can be picked again
       target.value = '';
@@ -397,7 +402,7 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
     return () => {
       document.body.removeChild(input);
     };
-  }, []);
+  }, [navigation, exercise]);
   
   // Sync mode state
   const [syncMode, setSyncMode] = useState(false);
@@ -556,8 +561,12 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
     });
 
     if (!result.canceled && result.assets[0]) {
-      setUserVideo(result.assets[0].uri);
-      setUserVideoFile(null);
+      // Navigate to VideoReviewScreen with the selected video
+      navigation.navigate('VideoReview', {
+        videoUri: result.assets[0].uri,
+        videoFile: null,
+        exercise,
+      });
     }
   };
 
@@ -581,8 +590,12 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
     });
 
     if (!result.canceled && result.assets[0]) {
-      setUserVideo(result.assets[0].uri);
-      setUserVideoFile(null);
+      // Navigate to VideoReviewScreen with the recorded video
+      navigation.navigate('VideoReview', {
+        videoUri: result.assets[0].uri,
+        videoFile: null,
+        exercise,
+      });
     }
   };
 

@@ -9,9 +9,11 @@ export type RootStackParamList = {
   Processing: undefined;
   Result: { result: AnalysisResponse };
   // ForgeFit screens
+  MainDrawer: undefined;
   ForgeFitHome: undefined;
   ExerciseList: { muscleGroup: MuscleGroup };
   ExerciseDetail: { exercise: ExerciseAPI };
+  VideoReview: { videoUri: string; videoFile?: File | null; exercise: ExerciseAPI };
 };
 
 export type DrawerParamList = {

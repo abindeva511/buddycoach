@@ -10,6 +10,7 @@ import {
   ScrollView,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import { get9x16Thumbnail } from '../utils/videoUtils';
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/types";
 import api from "../api/api";
@@ -51,6 +52,7 @@ const workoutInfo: Record<string, { emoji: string; title: string; tips: string[]
 };
 
 export default function UploadScreen({ route, navigation }: Props) {
+  const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
   const { workout } = route.params;
   const [file, setFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [loading, setLoading] = useState(false);
@@ -64,6 +66,9 @@ export default function UploadScreen({ route, navigation }: Props) {
       if (!result.canceled) {
         setFile(result.assets[0]);
         setError("");
+        // Generate a 9:16 thumbnail for preview
+        const thumb = await get9x16Thumbnail(result.assets[0].uri);
+        setVideoThumbnail(thumb);
       }
     } catch (e) {
       setError("Failed to pick video");
@@ -158,6 +163,13 @@ export default function UploadScreen({ route, navigation }: Props) {
                 {file.name}
               </Text>
               <Text style={styles.changeText}>Tap to change</Text>
+              {videoThumbnail ? (
+                <Image
+                  source={{ uri: videoThumbnail }}
+                  style={{ width: 200, height: 355, borderRadius: 12, marginTop: 8 }}
+                  resizeMode="cover"
+                />
+              ) : null}
             </View>
           ) : (
             <View style={styles.uploadPlaceholder}>

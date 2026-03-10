@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -40,12 +42,21 @@ _PRETRAINED_URL = f"https://dl.fbaipublicfiles.com/video-pose-3d/{_PRETRAINED}"
 
 
 def _run(cmd: str, cwd: str | None = None) -> None:
-    """Run a shell command, stream output, raise on non-zero exit."""
+    """Run a shell command, stream stdout/stderr to logger, raise on non-zero exit."""
     logger.info(">>> %s", cmd)
-    result = subprocess.run(cmd, shell=True, cwd=cwd)
+    result = subprocess.run(
+        cmd, shell=True, cwd=cwd,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    if result.stdout:
+        logger.info("[stdout]\n%s", result.stdout[-4000:])
+    if result.stderr:
+        logger.warning("[stderr]\n%s", result.stderr[-4000:])
     if result.returncode != 0:
+        stderr_snippet = (result.stderr or "")[-2000:]
         raise RuntimeError(
-            f"Pipeline step failed (exit {result.returncode}): {cmd}"
+            f"Pipeline step failed (exit {result.returncode}): {cmd}\n"
+            f"--- stderr ---\n{stderr_snippet}"
         )
 
 
@@ -70,7 +81,7 @@ def _ensure_pretrained() -> None:
         logger.info("[SKIP] Pretrained model already downloaded.")
 
 
-def run_pipeline(video_bytes: bytes, stem: str = "input") -> bytes:
+def run_pipeline(video_bytes: bytes, stem: str = "input") -> tuple[bytes, bytes | None]:
     """
     Execute the full VideoPose3D pipeline on *video_bytes*.
 
@@ -81,8 +92,13 @@ def run_pipeline(video_bytes: bytes, stem: str = "input") -> bytes:
 
     Returns
     -------
-    bytes : content of the exported ``<stem>.npz`` (or .npy) file
+    tuple:
+        npz_bytes  : content of the exported 3D pose ``.npz`` (or ``.npy``) file
+        video_bytes: content of the rendered pose overlay video (.mp4), or None
     """
+    # Sanitize stem: replace whitespace and shell-unsafe chars with underscores
+    stem = re.sub(r'[^\w.-]', '_', stem)
+
     with tempfile.TemporaryDirectory(prefix="pose_") as job_dir:
         vid_dir = os.path.join(job_dir, "videos")
         out_dir = os.path.join(job_dir, "output_directory")
@@ -100,35 +116,35 @@ def run_pipeline(video_bytes: bytes, stem: str = "input") -> bytes:
 
         # Step 2: 2D keypoint detection with Detectron2
         _run(
-            f"{_PY} infer_video_d2.py "
+            f"{shlex.quote(_PY)} infer_video_d2.py "
             "--cfg COCO-Keypoints/keypoint_rcnn_R_101_FPN_3x.yaml "
-            f"--output-dir {out_dir} "
+            f"--output-dir {shlex.quote(out_dir)} "
             "--image-ext mp4 "
-            f"{vid_dir}",
+            f"{shlex.quote(vid_dir)}",
             cwd=_INFERENCE_DIR,
         )
-        
-        # Step 2b: No longer needed - infer_video_d2.py now outputs .npy
 
         # Step 3: prepare custom 2D dataset
         _run(
-            f"{_PY} prepare_data_2d_custom.py -i {out_dir} -o myvideos",
+            f"{shlex.quote(_PY)} prepare_data_2d_custom.py -i {shlex.quote(out_dir)} -o myvideos",
             cwd=_DATA_DIR,
         )
 
-        # Step 4: export raw 3D pose data (.npz)
+        # Step 4: export raw 3D pose data (.npz) + rendered video
         export_base = os.path.join(job_dir, stem)
+        output_video = f"{export_base}_rendered.mp4"
         _run(
-            f"{_PY} run.py "
+            f"{shlex.quote(_PY)} run.py "
             "-d custom -k myvideos "
             "-arc 3,3,3,3,3 "
-            f"-c checkpoint --evaluate {_PRETRAINED} "
+            f"-c checkpoint --evaluate {shlex.quote(_PRETRAINED)} "
             "--render "
-            f"--viz-subject {stem}.mp4 "
+            f"--viz-subject {shlex.quote(stem + '.mp4')} "
             "--viz-action custom "
             "--viz-camera 0 "
-            f"--viz-video {input_video} "
-            f"--viz-export {export_base} "
+            f"--viz-video {shlex.quote(input_video)} "
+            f"--viz-export {shlex.quote(export_base)} "
+            f"--viz-output {shlex.quote(output_video)} "
             "--viz-size 6",
             cwd=_REPO_DIR,
         )
@@ -143,6 +159,16 @@ def run_pipeline(video_bytes: bytes, stem: str = "input") -> bytes:
                 f"Pipeline finished but export not found at {export_base}.[npz|npy]"
             )
 
-        logger.info("Pipeline complete — reading: %s", result_path)
+        logger.info("Pipeline complete — reading pose: %s", result_path)
         with open(result_path, "rb") as fh:
-            return fh.read()
+            npz_bytes = fh.read()
+
+        video_bytes_out: bytes | None = None
+        if os.path.exists(output_video):
+            logger.info("Pipeline complete — reading video: %s", output_video)
+            with open(output_video, "rb") as fh:
+                video_bytes_out = fh.read()
+        else:
+            logger.warning("Rendered video not found at %s — skipping", output_video)
+
+        return npz_bytes, video_bytes_out

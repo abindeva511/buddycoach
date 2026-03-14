@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 from pydantic import BaseModel
 import os
+import io
 import boto3
 from botocore.exceptions import ClientError
 from app.db.session import get_exercises_db
@@ -272,28 +273,46 @@ def get_exercise(exercise_id: int, db: Session = Depends(get_exercises_db)):
 
 @router.get("/{exercise_id}/video")
 def get_exercise_video(exercise_id: int, db: Session = Depends(get_exercises_db)):
-    """Get or redirect to exercise video (returns presigned URL for S3)"""
+    """Stream exercise video — proxies from S3 so the client never needs direct S3 access (avoids CORS issues)"""
     exercise = db.query(ExerciseDB).filter(ExerciseDB.id == exercise_id).first()
     if not exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
-    
-    # Prefer local file, fall back to presigned S3 URL
+
+    # Prefer local file
     if exercise.video_path and os.path.exists(exercise.video_path):
         return FileResponse(
             exercise.video_path,
             media_type="video/mp4",
             filename=f"{exercise.exercise_name}.mp4"
         )
-    
+
+    # Proxy S3 content directly (no redirect) — avoids CORS preflight issues
     if exercise.video_url and exercise.video_url.strip():
-        # If it's an S3 URL, generate presigned version
-        if 's3.amazonaws.com' in exercise.video_url:
-            presigned_url = get_presigned_url(exercise.video_url)
-            if presigned_url:
-                return RedirectResponse(url=presigned_url)
-        # Otherwise redirect to original URL
-        return RedirectResponse(url=exercise.video_url)
-    
+        s3_client = get_s3_client()
+        if s3_client and 's3.amazonaws.com' in exercise.video_url:
+            try:
+                # Parse bucket + key from URL
+                # e.g. https://buddy-coach-trainer.s3.us-east-1.amazonaws.com/exercises/Front_Raise.mp4
+                url_path = exercise.video_url.split('.amazonaws.com/')[-1].strip('/')
+                bucket = exercise.video_url.split('//')[1].split('.s3.')[0]
+                obj = s3_client.get_object(Bucket=bucket, Key=url_path)
+                body = obj['Body'].read()
+                filename = f"{exercise.exercise_name.replace(' ', '_')}.mp4"
+                return StreamingResponse(
+                    io.BytesIO(body),
+                    media_type="video/mp4",
+                    headers={"Content-Disposition": f"inline; filename=\"{filename}\"",
+                             "Content-Length": str(len(body))}
+                )
+            except Exception as e:
+                print(f"S3 proxy failed for exercise {exercise_id}: {e}")
+                # Fall back to redirect if proxy fails
+                presigned_url = get_presigned_url(exercise.video_url)
+                if presigned_url:
+                    return RedirectResponse(url=presigned_url)
+        else:
+            return RedirectResponse(url=exercise.video_url)
+
     raise HTTPException(status_code=404, detail="Video not found")
 
 

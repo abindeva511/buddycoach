@@ -20,6 +20,8 @@ export default function ResultScreen({ route, navigation }: Props) {
   const { result } = route.params;
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [isLoadingRefVideo, setIsLoadingRefVideo] = useState(false);
+  const [refVideoUrl, setRefVideoUrl] = useState<string | null>(null);
 
   // Calculate a simple score based on result (placeholder logic)
   const score = Math.floor(Math.random() * 20) + 80; // 80-100 for demo
@@ -27,7 +29,22 @@ export default function ResultScreen({ route, navigation }: Props) {
   // Support both old and new API response formats
   const poseDownloadUrl = result.pose_download_url || result.download_url;
   const videoDownloadUrl = result.video_download_url;
-  const videoAvailable = result.video_available === true;
+  const videoAvailable = videoDownloadUrl != null;
+  const refVideoDownloadUrl = result.reference_video_download_url;
+  const refVideoAvailable = refVideoDownloadUrl != null;
+  const refPoseDownloadUrl = result.reference_download_url;
+
+  // Debug: log what the backend returned
+  console.log('[ResultScreen] result keys:', JSON.stringify({
+    analysis_id: result.analysis_id,
+    download_url: result.download_url,
+    video_available: result.video_available,
+    video_download_url: result.video_download_url,
+    reference_analysis_id: result.reference_analysis_id,
+    reference_download_url: result.reference_download_url,
+    reference_video_available: result.reference_video_available,
+    reference_video_download_url: result.reference_video_download_url,
+  }));
 
   const downloadFile = async (downloadUrl: string, filename: string) => {
     if (!downloadUrl) return;
@@ -73,6 +90,20 @@ export default function ResultScreen({ route, navigation }: Props) {
     }
   };
 
+  const loadRefVideoPreview = async () => {
+    if (!refVideoDownloadUrl) return;
+    try {
+      setIsLoadingRefVideo(true);
+      const response = await api.get(refVideoDownloadUrl, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'video/mp4' });
+      setRefVideoUrl(URL.createObjectURL(blob));
+    } catch (e: any) {
+      console.error('Failed to load reference video preview:', e.message);
+    } finally {
+      setIsLoadingRefVideo(false);
+    }
+  };
+
   // Auto-load video preview when component mounts
   useEffect(() => {
     if (videoAvailable && videoDownloadUrl) {
@@ -80,12 +111,26 @@ export default function ResultScreen({ route, navigation }: Props) {
     }
   }, [videoAvailable, videoDownloadUrl]);
 
+  useEffect(() => {
+    if (refVideoAvailable && refVideoDownloadUrl) {
+      loadRefVideoPreview();
+    }
+  }, [refVideoAvailable, refVideoDownloadUrl]);
+
   const downloadNpy = async () => {
     await downloadFile(poseDownloadUrl, `pose3d_${result.analysis_id ?? 'result'}.npz`);
   };
 
   const downloadVideo = async () => {
     await downloadFile(videoDownloadUrl, `pose_visualization_${result.analysis_id ?? 'result'}.mp4`);
+  };
+
+  const downloadRefVideo = async () => {
+    await downloadFile(refVideoDownloadUrl!, `reference_pose_${result.reference_analysis_id ?? 'ref'}.mp4`);
+  };
+
+  const downloadRefNpy = async () => {
+    await downloadFile(refPoseDownloadUrl!, `pose3d_reference_${result.reference_analysis_id ?? 'ref'}.npz`);
   };
 
   return (
@@ -100,10 +145,10 @@ export default function ResultScreen({ route, navigation }: Props) {
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
       >
-        {/* Video Preview Section */}
+        {/* Your Video Preview Section */}
         {videoAvailable && (
           <View style={styles.videoPreviewSection}>
-            <Text style={styles.videoPreviewTitle}>Your Analysis Result</Text>
+            <Text style={styles.videoPreviewTitle}>📹 Your Pose Analysis</Text>
             {videoUrl ? (
               <View style={styles.videoContainer}>
                 <Video
@@ -126,6 +171,39 @@ export default function ResultScreen({ route, navigation }: Props) {
                   <>
                     <Text style={styles.loadVideoIcon}>🎬</Text>
                     <Text style={styles.loadVideoText}>Load Video Preview</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {/* Reference Video Preview Section */}
+        {refVideoAvailable && (
+          <View style={[styles.videoPreviewSection, { borderLeftWidth: 4, borderLeftColor: '#00cc88' }]}>
+            <Text style={styles.videoPreviewTitle}>🎯 Reference Pose Analysis</Text>
+            {refVideoUrl ? (
+              <View style={styles.videoContainer}>
+                <Video
+                  source={{ uri: refVideoUrl }}
+                  style={styles.videoPlayer}
+                  resizeMode={ResizeMode.CONTAIN}
+                  useNativeControls
+                  isLooping={false}
+                />
+              </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.loadVideoButton}
+                onPress={loadRefVideoPreview}
+                disabled={isLoadingRefVideo}
+              >
+                {isLoadingRefVideo ? (
+                  <ActivityIndicator color={colors.primary} />
+                ) : (
+                  <>
+                    <Text style={styles.loadVideoIcon}>🎬</Text>
+                    <Text style={styles.loadVideoText}>Load Reference Preview</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -197,7 +275,18 @@ export default function ResultScreen({ route, navigation }: Props) {
               onPress={downloadVideo}
             >
               <Text style={styles.downloadButtonIcon}>🎬</Text>
-              <Text style={styles.downloadButtonVideoText}>Download Pose Video (.mp4)</Text>
+              <Text style={styles.downloadButtonVideoText}>Download Your Pose Video (.mp4)</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Download Reference Pose Video */}
+          {refVideoAvailable && refVideoDownloadUrl && (
+            <TouchableOpacity
+              style={[styles.downloadButtonVideo, { borderColor: '#00cc88', backgroundColor: '#0a2e20' }]}
+              onPress={downloadRefVideo}
+            >
+              <Text style={styles.downloadButtonIcon}>🎯</Text>
+              <Text style={styles.downloadButtonVideoText}>Download Reference Pose Video (.mp4)</Text>
             </TouchableOpacity>
           )}
 
@@ -208,7 +297,18 @@ export default function ResultScreen({ route, navigation }: Props) {
               onPress={downloadNpy}
             >
               <Text style={styles.downloadButtonIcon}>📊</Text>
-              <Text style={styles.downloadButtonText}>Download 3D Pose Data (.npz)</Text>
+              <Text style={styles.downloadButtonText}>Download Your 3D Pose Data (.npz)</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Download Reference 3D pose data */}
+          {refPoseDownloadUrl && (
+            <TouchableOpacity
+              style={[styles.downloadButton, { borderColor: '#00cc88', backgroundColor: '#0a2e20' }]}
+              onPress={downloadRefNpy}
+            >
+              <Text style={styles.downloadButtonIcon}>🎯</Text>
+              <Text style={styles.downloadButtonText}>Download Reference 3D Pose Data (.npz)</Text>
             </TouchableOpacity>
           )}
 

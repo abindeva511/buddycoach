@@ -639,16 +639,43 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
         } as any);
       }
 
-      setAnalyzeStep('Uploading video...');
+      setAnalyzeStep('Uploading your video...');
       const uploadRes = await api.post('/api/v1/files', formData);
 
-      setAnalyzeStep('Running pose analysis...');
-      const analysisRes = await api.post('/api/v1/analysis/pose3d', {
-        file_id: uploadRes.data.id,
-      });
+      // Fetch + upload reference video in parallel with starting user analysis
+      let refFileId: string | null = null;
+      if (exercise.has_video) {
+        try {
+          setAnalyzeStep('Preparing reference video...');
+          // Backend pulls from S3 directly — no CORS, no blob transfer
+          const refUploadRes = await api.post(`/api/v1/files/from-exercise/${exercise.id}`);
+          refFileId = refUploadRes.data.id;
+          console.log('[VideoReview] ref registered ok, file_id=', refFileId);
+        } catch (refErr) {
+          console.warn('[VideoReview] reference video registration failed, continuing user only', refErr);
+        }
+      }
+
+      setAnalyzeStep('Running pose analysis on both videos...');
+      const [userAnalysisRes, refAnalysisRes] = await Promise.all([
+        api.post('/api/v1/analysis/pose3d', { file_id: uploadRes.data.id }),
+        refFileId
+          ? api.post('/api/v1/analysis/pose3d', { file_id: refFileId })
+          : Promise.resolve(null),
+      ]);
+
+      const combinedResult = {
+        ...userAnalysisRes.data,
+        ...(refAnalysisRes ? {
+          reference_analysis_id:        refAnalysisRes.data.analysis_id,
+          reference_download_url:       refAnalysisRes.data.download_url,
+          reference_video_available:    refAnalysisRes.data.video_available,
+          reference_video_download_url: refAnalysisRes.data.video_download_url,
+        } : {}),
+      };
 
       setAnalyzeStep(null);
-      navigation.navigate('Result', { result: analysisRes.data });
+      navigation.navigate('Result', { result: combinedResult });
     } catch (e: any) {
       const status = e.response?.status;
       const detail = e.response?.data?.detail ?? e.response?.data?.message;

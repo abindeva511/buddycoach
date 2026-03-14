@@ -612,7 +612,6 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
       // Build FormData with the user's video
       const formData = new FormData();
       if (Platform.OS === 'web') {
-        // userVideoFile is always set on web (from hidden input)
         formData.append('file', userVideoFile!, userVideoFile!.name || 'workout.mp4');
       } else {
         const filename = userVideo.split('/').pop() ?? 'workout.mp4';
@@ -623,23 +622,48 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
         } as any);
       }
 
-      // Step 1: upload video file
-      setAnalyzeStep('Uploading video...');
-      console.log('[analyzeWorkout] uploading video...');
+      // Step 1: upload user video
+      setAnalyzeStep('Uploading your video...');
+      console.log('[analyzeWorkout] uploading user video...');
       const uploadRes = await api.post('/api/v1/files', formData);
       console.log('[analyzeWorkout] upload ok, file_id=', uploadRes.data.id);
 
-      // Step 2: trigger 3D pose estimation
-      setAnalyzeStep('Running pose analysis...');
-      console.log('[analyzeWorkout] starting pose3d analysis...');
-      const analysisRes = await api.post('/api/v1/analysis/pose3d', {
-        file_id: uploadRes.data.id,
-      });
-      console.log('[analyzeWorkout] analysis ok', analysisRes.data);
+      // Step 1b: register reference video server-side (backend pulls from S3 directly — no CORS)
+      let refFileId: string | null = null;
+      if (exercise.has_video) {
+        try {
+          setAnalyzeStep('Preparing reference video...');
+          const refUploadRes = await api.post(`/api/v1/files/from-exercise/${exercise.id}`);
+          refFileId = refUploadRes.data.id;
+          console.log('[analyzeWorkout] ref registered ok, file_id=', refFileId);
+        } catch (refErr) {
+          console.warn('[analyzeWorkout] reference video registration failed, continuing with user only', refErr);
+        }
+      }
 
-      // Navigate to result screen
+      // Step 2: run both analyses in parallel
+      setAnalyzeStep('Running pose analysis on both videos...');
+      console.log('[analyzeWorkout] starting pose3d analyses...');
+      const [userAnalysisRes, refAnalysisRes] = await Promise.all([
+        api.post('/api/v1/analysis/pose3d', { file_id: uploadRes.data.id }),
+        refFileId
+          ? api.post('/api/v1/analysis/pose3d', { file_id: refFileId })
+          : Promise.resolve(null),
+      ]);
+      console.log('[analyzeWorkout] analyses ok', userAnalysisRes.data);
+
+      const combinedResult = {
+        ...userAnalysisRes.data,
+        ...(refAnalysisRes ? {
+          reference_analysis_id:        refAnalysisRes.data.analysis_id,
+          reference_download_url:       refAnalysisRes.data.download_url,
+          reference_video_available:    refAnalysisRes.data.video_available,
+          reference_video_download_url: refAnalysisRes.data.video_download_url,
+        } : {}),
+      };
+
       setAnalyzeStep(null);
-      navigation.navigate('Result', { result: analysisRes.data });
+      navigation.navigate('Result', { result: combinedResult });
     } catch (e: any) {
       const status = e.response?.status;
       const detail = e.response?.data?.detail ?? e.response?.data?.message;

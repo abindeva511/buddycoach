@@ -1,0 +1,87 @@
+================================================================================
+📋 MOVEMENT ANALYSIS REPORT
+================================================================================
+
+Joints used for alignment: ['Hip', 'RHip', 'RKnee', 'RFoot', 'LHip', 'LKnee', 'LFoot', 'Spine', 'Thorax', 'Neck', 'Head']
+USE_LEGS=1  USE_SPINE=1  USE_ARMS=0
+
+================================================================================
+SECTION 1: SPINE CURVATURE
+================================================================================
+
+── Frame 0 ──
+### Summary
+In Video A, the hip is more curved and bends slightly forward, while the mid-spine and thorax are also relatively curved but not as pronounced. In contrast, Video B shows a less pronounced curve in the hip and mid-spine, with a more upright thorax position. Overall, Video A demonstrates more curvature and forward bending, while Video B is more upright and less curved.
+
+### Comparison Table
+
+| Feature          | Video A            | Video B            |
+|------------------|--------------------|--------------------|
+| Hip Curvature     | More curved, bends forward | Less curved, more upright |
+| Mid-Spine Curvature | Moderate curvature   | Less curved, more upright |
+| Thorax Curvature   | Slightly curved      | More upright         |
+| Overall Uprightness | Less upright       | More upright         |
+
+### Final Verdict
+Video B exhibits a more upright posture with less curvature throughout the spine, making it generally more aligned than Video A, which has more pronounced curves and forward bends.
+
+── Frame 1 ──
+### Analysis
+
+**Video A:**
+- **Hip (t=0)**: The hip is slightly curved, bending downwards.
+- **Mid-spine (t=1)**: The mid-spine is more curved, also bending downwards but with a sharper curve.
+- **Thorax (t=2)**: The thorax is less curved than the mid-spine, but still bends downwards.
+
+**Video B:**
+- **Hip (t=0)**: The hip is relatively upright with a slight downward curve.
+- **Mid-spine (t=1)**: The mid-spine shows a gentle upward curve, indicating more upright posture.
+- **Thorax (t=2)**: The thorax remains mostly upright with a gentle upward curve as well.
+
+### Comparison Table
+
+|          | Hip        | Mid-spine  | Thorax    |
+|----------|------------|------------|-----------|
+| **Video A** | Curved down | Curved down | Less curved down |
+| **Video B** | Slightly upright | Gentle upward | Mostly upright |
+
+### Verdict
+Video A shows a more pronounced downward curvature in both the hip and mid-spine, making it less upright overall. In contrast, Video B demonstrates a more upright posture, especially in the mid-spine and thorax, suggesting better alignment and posture.
+
+── Frame 2 ──
+### Summary
+In Video A, the hip has a moderate forward bend, while the mid-spine and thorax are more upright. In contrast, Video B shows the hip with a slight backward curve, while the mid-spine and thorax have more pronounced forward bends. Overall, Video A appears more upright than Video B.
+
+### Comparison Table
+
+| Part of Spine | Video A           | Video B           |
+|---------------|-------------------|-------------------|
+| Hip           | Moderately forward | Slightly backward  |
+| Mid-Spine     | More upright       | Forward bending    |
+| Thorax        | More upright       | Pronounced forward  |
+
+### Final Verdict
+Video A displays a more upright posture overall, particularly in the mid-spine and thorax, while Video B has more pronounced curves, especially in the mid-spine and thorax, indicating a less upright position.
+
+================================================================================
+SECTION 2: KNEE & HIP COACHING
+================================================================================
+
+🔎 Overall: Case 1 shows a less effective squat pattern compared to Case 2. The movement lacks depth and fluidity, indicating issues with mobility and technique. The differences in hip and knee angles suggest that Case 1 is not achieving optimal positioning throughout the squat.
+
+👀 What It Looks Like: In Frame 1, Case 1 is starting with a higher hip angle and lower knee angle, suggesting a more upright position which limits depth. By Frame 2, the hip angle stays higher while the knee angle increases slightly, but it still doesn't reach the depth of Case 2. By Frame 3, there's a slight return to the initial posture, with the hips not fully extending and knees not bending sufficiently. Case 2, conversely, maintains a consistent pattern of lower hip angles and deeper knee bends, indicating a more effective squat.
+
+🎯 Insight: Case 1’s squat lacks the necessary depth and hip mobility. The knees do not flex sufficiently, which is crucial for a proper squat. The higher hip angles indicate a potential restriction in hip flexion or a compensatory movement pattern. This could lead to reduced power and increased risk of injury over time.
+
+🏋️ Coaching Corrections:
+1. **Depth Focus**: Encourage Case 1 to aim for a lower squat position. Use cues like "Sit back" or "Drop your hips" to promote better depth.
+2. **Knee Tracking**: Ensure the knees track over the toes throughout the movement. Remind them to "Push your knees out" to engage the hips properly.
+3. **Hip Mobility**: Incorporate dynamic stretches and mobility drills for the hips. Cues like “Open your hips” can help them achieve better positioning.
+4. **Posture Check**: Encourage a more neutral spine and lower hip position. Cues like “Chest up” and “Back straight” can help maintain proper alignment.
+5. **Practice with Slow Tempo**: Slow down the descent to focus on control and technique, reinforcing proper angles. Use cues like “Take your time on the way down” to promote mindfulness of their movement quality. 
+
+With these adjustments, Case 1 can improve their squat performance significantly.
+
+================================================================================
+END OF REPORT
+================================================================================

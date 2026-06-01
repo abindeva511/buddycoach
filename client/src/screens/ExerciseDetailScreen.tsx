@@ -18,6 +18,7 @@ import {
 import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import Slider from '@react-native-community/slider';
+import { WebView } from 'react-native-webview';
 import { colors, spacing, borderRadius } from '../theme/forgefit';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
@@ -28,6 +29,57 @@ type Props = NativeStackScreenProps<RootStackParamList, 'ExerciseDetail'>;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const VIDEO_HEIGHT = (SCREEN_WIDTH * 9) / 16; // 16:9 aspect ratio
+
+// ─── Smart video player: WebView for YouTube/embed URLs, expo-av for direct mp4 ─
+const isYouTubeUrl = (url: string) =>
+  url.includes('youtube.com') || url.includes('youtu.be');
+
+function VideoPlayer({
+  uri,
+  style,
+  videoRef,
+  resizeMode,
+  isLooping,
+  onPlaybackStatusUpdate,
+  onError,
+}: {
+  uri: string;
+  style: any;
+  videoRef?: React.RefObject<any>;
+  resizeMode?: ResizeMode;
+  isLooping?: boolean;
+  onPlaybackStatusUpdate?: (s: AVPlaybackStatus) => void;
+  onError?: (e: string) => void;
+}) {
+  if (isYouTubeUrl(uri)) {
+    // YouTube embed — wrap in an iframe via WebView
+    const html = `<!DOCTYPE html><html><body style="margin:0;background:#000">
+      <iframe width="100%" height="100%" src="${uri}" frameborder="0"
+        allow="autoplay; encrypted-media" allowfullscreen
+        style="position:absolute;top:0;left:0;width:100%;height:100%">
+      </iframe></body></html>`;
+    return (
+      <WebView
+        style={style}
+        source={{ html }}
+        allowsFullscreenVideo
+        mediaPlaybackRequiresUserAction={false}
+        javaScriptEnabled
+      />
+    );
+  }
+  return (
+    <Video
+      ref={videoRef}
+      source={{ uri }}
+      style={style}
+      resizeMode={resizeMode ?? ResizeMode.CONTAIN}
+      isLooping={isLooping}
+      onPlaybackStatusUpdate={onPlaybackStatusUpdate}
+      onError={onError ? (e) => onError(String(e)) : undefined}
+    />
+  );
+}
 
 // ─── Zoom + Pan hook ────────────────────────────────────────────────────────
 const ZOOM_MIN = 1;
@@ -797,9 +849,9 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
                 <View ref={refZP.containerRef} style={styles.comparisonVideoBox} {...refZP.panHandlers}>
                   <View ref={refZP.wrapperRef} style={styles.zoomWrapper}>
                     {exercise.has_video && videoUrl ? (
-                      <Video
-                        ref={videoRef}
-                        source={{ uri: videoUrl }}
+                      <VideoPlayer
+                        uri={videoUrl}
+                        videoRef={videoRef}
                         style={styles.comparisonVideo}
                         resizeMode={ResizeMode.CONTAIN}
                         isLooping={!syncMode}
@@ -1010,21 +1062,14 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
               {exercise.has_video && videoUrl ? (
                 <>
                   <View ref={singleZP.wrapperRef} style={styles.zoomWrapper}>
-                    <Video
-                      ref={videoRef}
-                      source={{ uri: videoUrl }}
+                    <VideoPlayer
+                      uri={videoUrl}
+                      videoRef={videoRef}
                       style={styles.video}
-                      // @ts-ignore - videoStyle is supported on web
-                      videoStyle={Platform.OS === 'web' ? { 
-                        width: '100%', 
-                        height: '100%',
-                        objectFit: 'contain',
-                        objectPosition: 'center',
-                      } as any : undefined}
                       resizeMode={ResizeMode.CONTAIN}
                       isLooping
                       onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
-                      onError={(e) => handleVideoError(String(e))}
+                      onError={handleVideoError}
                     />
                   </View>
                   // @ts-ignore

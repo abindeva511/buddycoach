@@ -7,14 +7,79 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import { Video, ResizeMode } from "expo-av";
 import api from "../api/api";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { RootStackParamList } from "../navigation/types";
+import { RootStackParamList, ComparisonFrame } from "../navigation/types";
 import { colors, shadows } from "../theme/colors";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Result">;
+
+// ─── Frame card shown in the comparison section ───────────────────────────────
+function FrameCard({ frame, index }: { frame: ComparisonFrame; index: number }) {
+  const angleRows = [
+    { joint: 'Right Knee', you: frame.right_knee_you, ref: frame.right_knee_ref },
+    { joint: 'Left Knee',  you: frame.left_knee_you,  ref: frame.left_knee_ref  },
+    { joint: 'Right Hip',  you: frame.right_hip_you,  ref: frame.right_hip_ref  },
+    { joint: 'Left Hip',   you: frame.left_hip_you,   ref: frame.left_hip_ref   },
+  ];
+  return (
+    <View style={frameStyles.card}>
+      <Text style={frameStyles.cardTitle}>Frame {index + 1}  (you #{frame.user_frame_no} · ref #{frame.ref_frame_no})</Text>
+      {/* Side-by-side images */}
+      <View style={frameStyles.imageRow}>
+        <View style={frameStyles.imageBox}>
+          <Text style={[frameStyles.imageLabel, { color: '#4d9fff' }]}>YOU</Text>
+          <Image
+            source={{ uri: frame.user_image }}
+            style={frameStyles.image}
+            resizeMode="contain"
+          />
+        </View>
+        <View style={frameStyles.imageBox}>
+          <Text style={[frameStyles.imageLabel, { color: '#ff6b6b' }]}>REF</Text>
+          <Image
+            source={{ uri: frame.ref_image }}
+            style={frameStyles.image}
+            resizeMode="contain"
+          />
+        </View>
+      </View>
+      {/* Angle table */}
+      <View style={frameStyles.table}>
+        <View style={frameStyles.tableHeader}>
+          <Text style={[frameStyles.tableCell, frameStyles.tableHeaderText, { flex: 2 }]}>Joint</Text>
+          <Text style={[frameStyles.tableCell, frameStyles.tableHeaderText]}>You</Text>
+          <Text style={[frameStyles.tableCell, frameStyles.tableHeaderText]}>Ref</Text>
+          <Text style={[frameStyles.tableCell, frameStyles.tableHeaderText]}>Δ</Text>
+        </View>
+        {angleRows.map(row => {
+          const delta = Math.abs(row.you - row.ref);
+          const warn = delta > 15;
+          return (
+            <View key={row.joint} style={frameStyles.tableRow}>
+              <Text style={[frameStyles.tableCell, { flex: 2, color: colors.textSecondary }]}>{row.joint}</Text>
+              <Text style={[frameStyles.tableCell, { color: '#4d9fff' }]}>{row.you.toFixed(1)}°</Text>
+              <Text style={[frameStyles.tableCell, { color: '#ff6b6b' }]}>{row.ref.toFixed(1)}°</Text>
+              <Text style={[frameStyles.tableCell, { color: warn ? '#ffaa00' : colors.textSecondary }]}>
+                {warn ? '⚠️ ' : ''}{delta.toFixed(1)}°
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+      {/* GPT spine coaching */}
+      {!!frame.spine_coaching && (
+        <View style={frameStyles.coachingBox}>
+          <Text style={frameStyles.coachingLabel}>🧠 Spine Coaching</Text>
+          <Text style={frameStyles.coachingText}>{frame.spine_coaching}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
 
 export default function ResultScreen({ route, navigation }: Props) {
   const { result } = route.params;
@@ -44,6 +109,9 @@ export default function ResultScreen({ route, navigation }: Props) {
     reference_download_url: result.reference_download_url,
     reference_video_available: result.reference_video_available,
     reference_video_download_url: result.reference_video_download_url,
+    has_comparison: !!result.comparison,
+    comparison_frames: result.comparison?.frames?.length ?? 0,
+    dtw_cost: result.comparison?.dtw_cost,
   }));
 
   const downloadFile = async (downloadUrl: string, filename: string) => {
@@ -265,6 +333,19 @@ export default function ResultScreen({ route, navigation }: Props) {
             <Text style={styles.tipText}>Keep practicing regularly</Text>
           </View>
         </View>
+
+        {/* ── Frame-by-frame comparison ── */}
+        {result.comparison && result.comparison.frames && result.comparison.frames.length > 0 && (
+          <View style={styles.comparisonSection}>
+            <Text style={styles.comparisonTitle}>🔬 Frame-by-Frame Comparison</Text>
+            <Text style={styles.comparisonSub}>
+              DTW cost: {result.comparison.dtw_cost.toFixed(2)}  ·  {result.comparison.n_matched_frames} matched frames
+            </Text>
+            {result.comparison.frames.map((f, i) => (
+              <FrameCard key={i} frame={f} index={i} />
+            ))}
+          </View>
+        )}
 
         {/* Actions */}
         <View style={styles.actions}>
@@ -596,5 +677,107 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: colors.primary,
+  },
+  comparisonSection: {
+    marginBottom: 24,
+  },
+  comparisonTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  comparisonSub: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: 16,
+  },
+});
+
+// ─── Styles for FrameCard ─────────────────────────────────────────────────────
+const frameStyles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.backgroundCard,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  cardTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    marginBottom: 12,
+  },
+  imageRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  imageBox: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  imageLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 6,
+    letterSpacing: 1,
+  },
+  image: {
+    width: '100%',
+    aspectRatio: 0.75,
+    borderRadius: 8,
+    backgroundColor: '#111',
+  },
+  table: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 12,
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: colors.backgroundLight,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  tableHeaderText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  tableCell: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textPrimary,
+  },
+  coachingBox: {
+    backgroundColor: colors.backgroundLight,
+    borderRadius: 8,
+    padding: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#a855f7',
+  },
+  coachingLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#a855f7',
+    marginBottom: 6,
+  },
+  coachingText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
 });

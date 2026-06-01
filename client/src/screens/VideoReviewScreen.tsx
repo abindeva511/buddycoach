@@ -664,7 +664,7 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
           : Promise.resolve(null),
       ]);
 
-      const combinedResult = {
+      const combinedResult: any = {
         ...userAnalysisRes.data,
         ...(refAnalysisRes ? {
           reference_analysis_id:        refAnalysisRes.data.analysis_id,
@@ -673,6 +673,20 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
           reference_video_download_url: refAnalysisRes.data.video_download_url,
         } : {}),
       };
+
+      // Run frame-by-frame comparison if both NPZs are available
+      if (refAnalysisRes) {
+        try {
+          setAnalyzeStep('Comparing form frame by frame...');
+          const compareRes = await api.post('/api/v1/analysis/compare', {
+            user_analysis_id: userAnalysisRes.data.analysis_id,
+            ref_analysis_id:  refAnalysisRes.data.analysis_id,
+          });
+          combinedResult.comparison = compareRes.data;
+        } catch (cmpErr: any) {
+          console.warn('[VideoReview] comparison failed, continuing without it:', cmpErr?.message);
+        }
+      }
 
       setAnalyzeStep(null);
       navigation.navigate('Result', { result: combinedResult });

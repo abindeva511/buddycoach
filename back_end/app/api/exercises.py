@@ -67,8 +67,9 @@ def get_presigned_url(s3_url: str, expiry: int = 3600) -> Optional[str]:
         bucket = parts[0].replace('https://', '').strip()
         
         # Extract key from URL
-        if '/exercises/' in s3_url:
-            key = s3_url.split('.amazonaws.com/')[-1].strip('/')
+        if '/exercises/' in s3_url or '.amazonaws.com/' in s3_url:
+            from urllib.parse import unquote
+            key = unquote(s3_url.split('.amazonaws.com/')[-1].strip('/'))
         else:
             return s3_url
         
@@ -167,7 +168,7 @@ def get_muscle_groups(db: Session = Depends(get_exercises_db)):
 def get_exercises_by_muscle(
     muscle_group_id: int,
     skip: int = 0,
-    limit: int = 50,
+    limit: int = 300,
     db: Session = Depends(get_exercises_db)
 ):
     """Get exercises for a specific muscle group"""

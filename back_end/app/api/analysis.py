@@ -11,6 +11,8 @@ from app.models.analysis import Analysis
 from app.models.file import File
 from app.utils.s3 import download_file, upload_bytes
 from app.services.pose_estimation import run_pipeline
+from app.services.comparison import run_comparison
+from app.core.config import settings
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -208,3 +210,78 @@ async def download_pose3d_video(
         media_type="video/mp4",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/compare")
+async def compare_poses(
+    data: dict,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Run DTW alignment + joint angle analysis + GPT spine coaching on two
+    previously completed pose3d analyses.
+
+    Request body:
+        { "user_analysis_id": "<str>", "ref_analysis_id": "<str>" }
+
+    Response:
+        {
+            "dtw_cost": float,
+            "n_matched_frames": int,
+            "frames": [
+                {
+                    "idx": 0,
+                    "user_frame_no": int,
+                    "ref_frame_no": int,
+                    "user_image": "data:image/jpeg;base64,...",
+                    "ref_image":  "data:image/jpeg;base64,...",
+                    "right_knee_you": float, "right_knee_ref": float,
+                    "left_knee_you":  float, "left_knee_ref":  float,
+                    "right_hip_you":  float, "right_hip_ref":  float,
+                    "left_hip_you":   float, "left_hip_ref":   float,
+                    "spine_coaching": str
+                },
+                ...
+            ]
+        }
+    """
+    user_analysis_id = data.get("user_analysis_id")
+    ref_analysis_id  = data.get("ref_analysis_id")
+
+    if not user_analysis_id or not ref_analysis_id:
+        raise HTTPException(400, "user_analysis_id and ref_analysis_id are required")
+
+    user_analysis = db.get(Analysis, user_analysis_id)
+    ref_analysis  = db.get(Analysis, ref_analysis_id)
+
+    if not user_analysis or user_analysis.user_id != user.id:
+        raise HTTPException(404, "User analysis not found")
+    if not ref_analysis:
+        raise HTTPException(404, "Reference analysis not found")
+
+    # Fetch NPZ bytes (analysis_result stores the S3 key for the .npz)
+    user_npz_bytes = download_file(user_analysis.analysis_result)
+    ref_npz_bytes  = download_file(ref_analysis.analysis_result)
+
+    # Fetch original video bytes from the linked File records
+    user_file = db.get(File, user_analysis.file_id)
+    ref_file  = db.get(File, ref_analysis.file_id)
+
+    if not user_file or not ref_file:
+        raise HTTPException(500, "Could not locate original video files")
+
+    user_video_bytes = download_file(user_file.s3_key)
+    ref_video_bytes  = download_file(ref_file.s3_key)
+
+    openai_key = settings.OPENAI_API_KEY
+
+    result = await run_in_threadpool(
+        run_comparison,
+        user_npz_bytes,
+        ref_npz_bytes,
+        user_video_bytes,
+        ref_video_bytes,
+        openai_key,
+    )
+    return result

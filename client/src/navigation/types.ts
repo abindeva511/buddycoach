@@ -24,6 +24,31 @@ export type DrawerParamList = {
   FavoritesDrawer: undefined;
 };
 
+/** One frame of the DTW-aligned comparison */
+export interface ComparisonFrame {
+  idx: number;
+  user_frame_no: number;
+  ref_frame_no: number;
+  user_image: string;   // data:image/jpeg;base64,...
+  ref_image: string;
+  right_knee_you: number;
+  right_knee_ref: number;
+  left_knee_you: number;
+  left_knee_ref: number;
+  right_hip_you: number;
+  right_hip_ref: number;
+  left_hip_you: number;
+  left_hip_ref: number;
+  spine_coaching: string;
+}
+
+/** Full comparison payload returned by /api/v1/analysis/compare */
+export interface ComparisonResult {
+  dtw_cost: number;
+  n_matched_frames: number;
+  frames: ComparisonFrame[];
+}
+
 export interface AnalysisResponse {
   analysis_id: string;
   processing_time_seconds: number;
@@ -37,4 +62,6 @@ export interface AnalysisResponse {
   reference_download_url?: string;
   reference_video_available?: boolean;
   reference_video_download_url?: string | null;
+  // Frame-by-frame comparison (populated after /compare call)
+  comparison?: ComparisonResult;
 }

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET: str
 
     POSE_WORK_DIR: str = "/tmp/videopose3d"
+    OPENAI_API_KEY: str = ""
 
     class Config:
         env_file = ".env"

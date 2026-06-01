@@ -34,7 +34,7 @@ export default function ExerciseListScreen({ navigation, route }: Props) {
   const fetchExercises = async () => {
     try {
       setLoading(true);
-      const data = await exerciseApi.getExercisesByMuscle(Number(muscleGroup.id), 0, 100);
+      const data = await exerciseApi.getExercisesByMuscle(Number(muscleGroup.id), 0, 300);
       setExercises(data);
     } catch (error) {
       console.error('Failed to fetch exercises:', error);
@@ -175,7 +175,12 @@ export default function ExerciseListScreen({ navigation, route }: Props) {
                   <Text style={styles.exerciseNumText}>{index + 1}</Text>
                 </View>
                 <View style={styles.exerciseInfo}>
-                  <Text style={styles.exerciseName}>{exercise.exercise_name}</Text>
+                  <View style={styles.exerciseNameRow}>
+                    <Text style={styles.exerciseName}>{exercise.exercise_name}</Text>
+                    {exercise.has_video && (
+                      <Text style={styles.videoTag}>▶</Text>
+                    )}
+                  </View>
                   <View style={styles.exerciseMeta}>
                     {exercise.equipment_type && (
                       <View style={styles.metaTag}>
@@ -442,6 +447,15 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  exerciseNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  videoTag: {
+    fontSize: 10,
+    color: colors.accent,
   },
   exerciseNum: {
     width: 32,

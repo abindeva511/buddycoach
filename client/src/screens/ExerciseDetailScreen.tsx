@@ -827,7 +827,7 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
 
         {/* Breadcrumb */}
         <View style={styles.breadcrumb}>
-          <TouchableOpacity onPress={() => navigation.navigate('ForgeFitHome')}>
+          <TouchableOpacity onPress={() => navigation.navigate('Main')}>
             <Text style={styles.breadcrumbLink}>Home</Text>
           </TouchableOpacity>
           <Text style={styles.breadcrumbSep}> › </Text>

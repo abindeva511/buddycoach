@@ -395,7 +395,7 @@ export default function ResultScreen({ route, navigation }: Props) {
 
           <TouchableOpacity
             style={styles.primaryButton}
-            onPress={() => navigation.navigate("Home")}
+            onPress={() => navigation.navigate("Main")}
           >
             <Text style={styles.primaryButtonIcon}>🏠</Text>
             <Text style={styles.primaryButtonText}>Back to Home</Text>

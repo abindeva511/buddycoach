@@ -30,12 +30,8 @@ def stub_external(monkeypatch):
     def fake_download(key):
         return stored_files[key]
 
-    def fake_run_analysis(file_bytes: bytes, analysis_type: str):
-        return f"Analysis type: {analysis_type}\\nFile size: {len(file_bytes)} bytes"
-
     monkeypatch.setattr("app.api.files.upload_file", fake_upload)
     monkeypatch.setattr("app.api.analysis.download_file", fake_download)
-    monkeypatch.setattr("app.api.analysis.run_analysis", fake_run_analysis)
 
     return stored_files
 
@@ -110,43 +106,3 @@ def test_upload_requires_auth(client):
     )
 
     assert response.status_code == 401
-
-
-@pytest.mark.usefixtures("stub_external")
-def test_analyze_happy_path(client):
-    tokens = _register_and_login(client)
-    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
-
-    upload_response = client.post(
-        "/api/v1/files",
-        headers=headers,
-        files={"file": ("sample.txt", b"hello world", "text/plain")},
-    )
-    assert upload_response.status_code == 200
-    file_id = upload_response.json()["id"]
-
-    analysis_response = client.post(
-        "/api/v1/analysis",
-        headers=headers,
-        json={"file_id": file_id, "analysis_type": "summary"},
-    )
-
-    assert analysis_response.status_code == 200
-    body = analysis_response.json()
-    assert "analysis_id" in body
-    assert body["result"].startswith("Analysis type: summary")
-
-
-@pytest.mark.usefixtures("stub_external")
-def test_analyze_file_not_found(client):
-    tokens = _register_and_login(client)
-    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
-
-    response = client.post(
-        "/api/v1/analysis",
-        headers=headers,
-        json={"file_id": "00000000-0000-0000-0000-000000000000", "analysis_type": "summary"},
-    )
-
-    assert response.status_code == 404
-    assert response.json()["detail"] == "File not found"

@@ -4,13 +4,11 @@ import type { ExerciseAPI } from '../api/api';
 export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
+  Main: undefined;
   Home: undefined;
   Upload: { workout: string };
   Processing: undefined;
   Result: { result: AnalysisResponse };
-  // ForgeFit screens
-  MainDrawer: undefined;
-  ForgeFitHome: undefined;
   ExerciseList: { muscleGroup: MuscleGroup };
   ExerciseDetail: { exercise: ExerciseAPI };
   VideoReview: { videoUri: string; videoFile?: File | null; exercise: ExerciseAPI };

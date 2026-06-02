@@ -18,7 +18,18 @@ import { exerciseApi, ExerciseAPI } from '../api/api';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ExerciseList'>;
 
-const filterOptions = ['All', 'Barbell', 'Dumbbell', 'Cable', 'Bodyweight', 'Machine'];
+function categorizeEquipment(eq: string | null | undefined): string {
+  if (!eq) return 'Bodyweight';
+  const e = eq.trim();
+  if (e === 'Barbell' || e === 'B' || e.startsWith('BB')) return 'Barbell';
+  if (e === 'Dumbbell' || e.startsWith('DB')) return 'Dumbbell';
+  if (e === 'Cable' || e === 'C' || e.startsWith('CB')) return 'Cable';
+  if (e === 'Body Weight' || e === 'Bodyweight' || e.startsWith('BW')) return 'Bodyweight';
+  if (e === 'Lever' || e.startsWith('LV')) return 'Machine';
+  if (e === 'Sled' || e.startsWith('SL')) return 'Sled';
+  if (e === 'Smith' || e.startsWith('SM')) return 'Smith';
+  return 'Other';
+}
 
 export default function ExerciseListScreen({ navigation, route }: Props) {
   const { muscleGroup } = route.params;
@@ -43,13 +54,18 @@ export default function ExerciseListScreen({ navigation, route }: Props) {
     }
   };
 
+  const filterOptions = useMemo(() => {
+    const cats = new Set(exercises.map(e => categorizeEquipment(e.equipment_type)));
+    const order = ['Barbell', 'Dumbbell', 'Cable', 'Bodyweight', 'Machine', 'Sled', 'Smith', 'Other'];
+    return ['All', ...order.filter(c => cats.has(c))];
+  }, [exercises]);
+
   const filteredExercises = useMemo(() => {
     return exercises.filter((exercise) => {
       const matchesSearch = exercise.exercise_name.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesFilter = 
-        activeFilter === 'All' || 
-        exercise.equipment_type === activeFilter ||
-        (activeFilter === 'Bodyweight' && !exercise.equipment_type);
+      const matchesFilter =
+        activeFilter === 'All' ||
+        categorizeEquipment(exercise.equipment_type) === activeFilter;
       return matchesSearch && matchesFilter;
     });
   }, [exercises, searchQuery, activeFilter]);

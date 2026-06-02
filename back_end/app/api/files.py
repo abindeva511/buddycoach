@@ -5,6 +5,7 @@ from app.api.deps import get_current_user
 from app.models.file import File
 from app.utils.s3 import upload_file, s3
 from app.core.config import settings
+from urllib.parse import unquote
 import io
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -25,7 +26,7 @@ def register_exercise_video(exercise_id: int, user=Depends(get_current_user), db
     # e.g. https://buddy-coach-trainer.s3.us-east-1.amazonaws.com/exercises/Front_Raise.mp4
     try:
         bucket = s3_url.split('//')[1].split('.s3.')[0]
-        key = s3_url.split('.amazonaws.com/')[-1].strip('/')
+        key = unquote(s3_url.split('.amazonaws.com/')[-1].strip('/'))
         obj = s3.get_object(Bucket=bucket, Key=key)
         video_bytes = obj['Body'].read()
     except Exception as e:

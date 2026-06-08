@@ -8,7 +8,7 @@ export type RootStackParamList = {
   Home: undefined;
   Upload: { workout: string };
   Processing: undefined;
-  Result: { result: AnalysisResponse };
+  Result: { result: AnalysisResponse; exercise?: ExerciseAPI };
   ExerciseList: { muscleGroup: MuscleGroup };
   ExerciseDetail: { exercise: ExerciseAPI };
   VideoReview: { videoUri: string; videoFile?: File | null; exercise: ExerciseAPI };

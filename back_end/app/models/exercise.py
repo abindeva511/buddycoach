@@ -27,5 +27,6 @@ class ExerciseDB(Base):
     video_path = Column(Text)
     downloaded = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+    ref_npz_s3_key = Column(Text, nullable=True)   # cached 3D pose NPZ for the reference video
+
     muscle_group = relationship("MuscleGroupDB", back_populates="exercises")

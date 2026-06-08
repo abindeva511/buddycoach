@@ -179,21 +179,8 @@ def get_exercises_by_muscle(
         .limit(limit)
         .all()
     )
-    # Add has_video flag and convert S3 URLs to presigned URLs
     result = []
     for ex in exercises:
-        # Get presigned URL if video_url contains S3
-        video_url = ex.video_url
-        if video_url and isinstance(video_url, str) and 'amazonaws.com' in video_url:
-            print(f"DEBUG: Converting URL for {ex.exercise_name}")
-            presigned = get_presigned_url(video_url)
-            print(f"DEBUG: Got presigned: {presigned[:80] if presigned else 'None'}...")
-            if presigned and presigned != video_url:
-                video_url = presigned
-                print(f"DEBUG: Using presigned URL")
-            else:
-                print(f"DEBUG: Using original URL")
-        
         ex_dict = {
             "id": ex.id,
             "muscle_group_id": ex.muscle_group_id,
@@ -201,7 +188,7 @@ def get_exercises_by_muscle(
             "equipment_type": ex.equipment_type,
             "exercise_name": ex.exercise_name,
             "exercise_url": ex.exercise_url,
-            "video_url": video_url,
+            "video_url": ex.video_url,   # raw S3 URL — presigned on demand in GET /{id}
             "video_path": ex.video_path,
             "has_video": bool((ex.video_path and ex.video_path.strip()) or (ex.video_url and ex.video_url.strip()))
         }
@@ -290,12 +277,13 @@ def get_exercise_video(exercise_id: int, db: Session = Depends(get_exercises_db)
     # Proxy S3 content directly (no redirect) — avoids CORS preflight issues
     if exercise.video_url and exercise.video_url.strip():
         s3_client = get_s3_client()
-        if s3_client and 's3.amazonaws.com' in exercise.video_url:
+        if s3_client and 'amazonaws.com' in exercise.video_url:
             try:
-                # Parse bucket + key from URL
-                # e.g. https://buddy-coach-trainer.s3.us-east-1.amazonaws.com/exercises/Front_Raise.mp4
-                url_path = exercise.video_url.split('.amazonaws.com/')[-1].strip('/')
-                bucket = exercise.video_url.split('//')[1].split('.s3.')[0]
+                # Parse bucket + key from URL — strip query params first (URL may be a presigned URL)
+                from urllib.parse import unquote, urlparse
+                clean_url = exercise.video_url.split('?')[0]  # strip ?AWSAccessKeyId=... etc
+                url_path = unquote(clean_url.split('.amazonaws.com/')[-1].strip('/'))
+                bucket = clean_url.split('//')[1].split('.s3.')[0]
                 obj = s3_client.get_object(Bucket=bucket, Key=url_path)
                 body = obj['Body'].read()
                 filename = f"{exercise.exercise_name.replace(' ', '_')}.mp4"

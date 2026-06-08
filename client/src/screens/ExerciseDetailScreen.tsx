@@ -498,7 +498,17 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
     },
   });
 
-  const videoUrl = exercise.has_video ? exercise.video_url : null;
+  const [videoUrl, setVideoUrl] = useState<string | null>(
+    exercise.has_video ? exercise.video_url : null
+  );
+
+  // Fetch presigned URL on mount so S3 video is accessible
+  useEffect(() => {
+    if (!exercise.has_video) return;
+    exerciseApi.getExercise(exercise.id).then(data => {
+      if (data.video_url) setVideoUrl(data.video_url);
+    }).catch(() => {/* keep raw url as fallback */});
+  }, [exercise.id]);
 
   // Debug log
   const handlePlaybackStatusUpdate = (status: AVPlaybackStatus) => {
@@ -715,7 +725,7 @@ export default function ExerciseDetailScreen({ navigation, route }: Props) {
       };
 
       setAnalyzeStep(null);
-      navigation.navigate('Result', { result: combinedResult });
+      navigation.navigate('Result', { result: combinedResult, exercise });
     } catch (e: any) {
       const status = e.response?.status;
       const detail = e.response?.data?.detail ?? e.response?.data?.message;

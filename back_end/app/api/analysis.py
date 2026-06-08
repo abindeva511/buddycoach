@@ -1,10 +1,11 @@
 import io
 import os
+import time
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from fastapi.concurrency import run_in_threadpool
-from app.db.session import get_db
+from app.db.session import get_db, get_exercises_db
 from app.api.deps import get_current_user
 from app.models.analysis import Analysis
 from app.models.file import File
@@ -26,12 +27,12 @@ def _make_mock_npz() -> bytes:
     return buf.getvalue()
 
 
-def _run_pose_pipeline(file_bytes: bytes, stem: str) -> tuple[bytes, bytes | None]:
+def _run_pose_pipeline(file_bytes: bytes, stem: str, render: bool = True) -> tuple[bytes, bytes | None]:
     """Run VideoPose3D pipeline synchronously in a thread-pool worker.
     Returns (npz_bytes, video_bytes_or_None).
     Falls back to mock data when GPU/pipeline tools are unavailable (local dev)."""
     try:
-        return run_pipeline(file_bytes, stem=stem)
+        return run_pipeline(file_bytes, stem=stem, render=render)
     except Exception as exc:
         import traceback
         error_details = traceback.format_exc()
@@ -82,7 +83,7 @@ async def analyze_pose3d(
     stem = os.path.splitext(file.original_filename)[0] if file.original_filename else "workout"
 
     start = time.time()
-    npy_bytes, rendered_video_bytes = await run_in_threadpool(_run_pose_pipeline, video_bytes, stem)
+    npy_bytes, rendered_video_bytes = await run_in_threadpool(_run_pose_pipeline, video_bytes, stem, True)
     duration = int(time.time() - start)
 
     # Persist the result .npz to S3
@@ -180,6 +181,7 @@ async def compare_poses(
     data: dict,
     user=Depends(get_current_user),
     db: Session = Depends(get_db),
+    exercises_db: Session = Depends(get_exercises_db),
 ):
     """
     Run DTW alignment + joint angle analysis + GPT spine coaching on two
@@ -248,3 +250,90 @@ async def compare_poses(
         openai_key,
     )
     return result
+
+
+@router.post("/pose3d-ref/{exercise_id}")
+async def analyze_pose3d_reference(
+    exercise_id: int,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+    exercises_db: Session = Depends(get_exercises_db),
+):
+    """
+    Run pose3d on a reference exercise video, with NPZ caching.
+    If the exercise NPZ was already computed, return it instantly.
+    Otherwise run the pipeline, store the NPZ key on the exercise record, and return.
+    """
+    from app.models.exercise import ExerciseDB
+    from app.utils.s3 import upload_bytes, download_file, s3
+    from urllib.parse import unquote
+
+    exercise = exercises_db.query(ExerciseDB).filter(ExerciseDB.id == exercise_id).first()
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    if not exercise.video_url:
+        raise HTTPException(404, "No reference video for this exercise")
+
+    # ── Cache hit: NPZ already computed for this exercise ────────────────────────
+    if exercise.ref_npz_s3_key:
+        # Find or create a synthetic Analysis row so the compare endpoint works
+        cached = db.query(Analysis).filter(
+            Analysis.analysis_type == "pose3d_ref",
+            Analysis.analysis_result == exercise.ref_npz_s3_key,
+        ).first()
+        if cached:
+            return {
+                "analysis_id": cached.id,
+                "processing_time_seconds": cached.processing_time_seconds,
+                "cached": True,
+                "download_url": f"/api/v1/analysis/{cached.id}/download",
+                "video_available": False,
+            }
+
+    # ── Cache miss: fetch video from S3, run pipeline (no render), cache result ───
+    try:
+        bucket = exercise.video_url.split('//')[1].split('.s3.')[0]
+        key = unquote(exercise.video_url.split('.amazonaws.com/')[-1].strip('/'))
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        video_bytes = obj['Body'].read()
+    except Exception as e:
+        raise HTTPException(502, f"Failed to fetch reference video: {e}")
+
+    stem = exercise.exercise_name.replace(' ', '_').replace('/', '_')
+    start = time.time()
+    # render=False: skip skeleton video rendering for reference — not needed
+    npz_bytes, _ = await run_in_threadpool(_run_pose_pipeline, video_bytes, stem, False)
+    duration = int(time.time() - start)
+
+    # Store NPZ in S3
+    npz_key = upload_bytes(
+        npz_bytes,
+        user_id="ref",
+        filename=f"ref_{exercise_id}_{stem}_pose3d.npz",
+        content_type="application/octet-stream",
+    )
+
+    # Cache the key on the exercise row so future calls skip the pipeline
+    exercise.ref_npz_s3_key = npz_key
+    exercises_db.commit()
+
+    # Create an Analysis record (no file_id since this is a reference, not a user upload)
+    analysis = Analysis(
+        user_id=user.id,
+        file_id=None,
+        analysis_type="pose3d_ref",
+        analysis_result=npz_key,
+        video_result=None,
+        processing_time_seconds=duration,
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+
+    return {
+        "analysis_id": analysis.id,
+        "processing_time_seconds": duration,
+        "cached": False,
+        "download_url": f"/api/v1/analysis/{analysis.id}/download",
+        "video_available": False,
+    }

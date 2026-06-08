@@ -11,6 +11,7 @@ import io
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import cv2
@@ -55,6 +56,24 @@ N_SELECTED_FRAMES = 3
 
 
 # ── Cost matrix ────────────────────────────────────────────────────────────────
+def _cosine_dist_matrix(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """Vectorized pairwise mean cosine distance. A:(T1,K,3) B:(T2,K,3) → (T1,T2)"""
+    A_n = A / np.linalg.norm(A, axis=-1, keepdims=True).clip(min=1e-8)
+    B_n = B / np.linalg.norm(B, axis=-1, keepdims=True).clip(min=1e-8)
+    # einsum: for each (t1, t2, k) → dot of unit vectors, then mean over k
+    dot = np.einsum('ikd,jkd->ijk', A_n, B_n).clip(-1.0, 1.0)  # (T1, T2, K)
+    return (1.0 - dot).mean(axis=-1)  # (T1, T2)
+
+
+def _euclid_dist_matrix(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """Vectorized pairwise mean Euclidean distance. A:(T1,J,3) B:(T2,J,3) → (T1,T2)"""
+    A_sq = (A ** 2).sum(axis=-1)            # (T1, J)
+    B_sq = (B ** 2).sum(axis=-1)            # (T2, J)
+    dot  = np.einsum('ijd,kjd->ikj', A, B)  # (T1, T2, J)
+    dist_sq = (A_sq[:, None, :] + B_sq[None, :, :] - 2 * dot).clip(0)
+    return np.sqrt(dist_sq).mean(axis=-1)   # (T1, T2)
+
+
 def _build_cost_matrix(A: np.ndarray, B: np.ndarray) -> np.ndarray:
     A_c = root_center_pose(A, 0);  B_c = root_center_pose(B, 0)
     A_n, _ = scale_normalize_pose(A_c);  B_n, _ = scale_normalize_pose(B_c)
@@ -62,19 +81,17 @@ def _build_cost_matrix(A: np.ndarray, B: np.ndarray) -> np.ndarray:
     A_b = compute_bone_vectors(A_n, BONE_PAIRS)
     B_b = compute_bone_vectors(B_n, BONE_PAIRS)
 
-    T1, T2 = len(A), len(B)
-    cost = np.zeros((T1, T2), dtype=np.float32)
-    for t1 in range(T1):
-        for t2 in range(T2):
-            fc, n = 0.0, 0
-            fc += cosine_distance(A_b[t1], B_b[t2]).mean();  n += 1
-            vm_A = np.linalg.norm(A_v[t1], axis=-1)
-            vm_B = np.linalg.norm(B_v[t2], axis=-1)
-            if vm_A.mean() > 1e-6 and vm_B.mean() > 1e-6:
-                fc += cosine_distance(A_v[t1], B_v[t2]).mean(); n += 1
-            fc += euclidean_distance(A_n[t1], B_n[t2]).mean(); n += 1
-            cost[t1, t2] = fc / n
-    return cost
+    bone_cost   = _cosine_dist_matrix(A_b, B_b)   # (T1, T2)
+    euclid_cost = _euclid_dist_matrix(A_n, B_n)   # (T1, T2)
+
+    # Velocity term: only contribute where both sequences have meaningful motion
+    vm_A = np.linalg.norm(A_v, axis=-1).mean(axis=-1)           # (T1,)
+    vm_B = np.linalg.norm(B_v, axis=-1).mean(axis=-1)           # (T2,)
+    vel_mask = (vm_A[:, None] > 1e-6) & (vm_B[None, :] > 1e-6) # (T1, T2)
+    vel_cost = _cosine_dist_matrix(A_v, B_v)                    # (T1, T2)
+
+    n = 2.0 + vel_mask.astype(np.float32)                       # 2 or 3 per cell
+    return (bone_cost + euclid_cost + vel_mask * vel_cost) / n  # (T1, T2)
 
 
 # ── Angle helpers ──────────────────────────────────────────────────────────────
@@ -88,21 +105,23 @@ def _hip(hip, kj, spine):   return _angle(spine - hip, kj - hip)
 
 
 # ── Frame extractor ────────────────────────────────────────────────────────────
-def _extract_frame_b64(video_bytes: bytes, frame_idx: int) -> str:
-    """Write video to a temp file, extract one frame, return as JPEG base64."""
+def _extract_frames_b64(video_bytes: bytes, frame_indices: list[int]) -> list[str]:
+    """Open video once, extract multiple frames in one pass, return JPEG base64 list."""
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
         tmp.write(video_bytes)
         tmp_path = tmp.name
     try:
         cap = cv2.VideoCapture(tmp_path)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = cap.read()
+        frame_map: dict[int, str] = {}
+        for idx in sorted(set(frame_indices)):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                frame = np.full((100, 100, 3), 128, dtype=np.uint8)
+            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            frame_map[idx] = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
         cap.release()
-        if not ret:
-            # return 1×1 grey placeholder
-            frame = np.full((100, 100, 3), 128, dtype=np.uint8)
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+        return [frame_map[i] for i in frame_indices]
     finally:
         os.unlink(tmp_path)
 
@@ -186,53 +205,58 @@ def run_comparison(
     # ── Spine joints: Hip(0), Spine(7), Thorax(8) only (indices 0,1,2 of the 3) ─
     t_poly = np.array([0, 1, 2])
 
-    # ── Build per-frame payload ────────────────────────────────────────────────
-    frames_out = []
+    # ── Pre-compute per-frame angles + spine polys ─────────────────────────────
+    frame_data = []
     for fi, pos in enumerate(frame_pos):
-        user_vid_frame_no = a_indices[pos]
-        ref_vid_frame_no  = b_indices[pos]
-
         pose_A = A_ov[pos]
         pose_B = B_ov[pos]
-
-        # Angles
-        rk_you = _knee(pose_A[1], pose_A[2], pose_A[3])
-        rk_ref = _knee(pose_B[1], pose_B[2], pose_B[3])
-        lk_you = _knee(pose_A[4], pose_A[5], pose_A[6])
-        lk_ref = _knee(pose_B[4], pose_B[5], pose_B[6])
-        rh_you = _hip(pose_A[0], pose_A[1], pose_A[7])
-        rh_ref = _hip(pose_B[0], pose_B[1], pose_B[7])
-        lh_you = _hip(pose_A[0], pose_A[4], pose_A[7])
-        lh_ref = _hip(pose_B[0], pose_B[4], pose_B[7])
-
-        # Spine polynomial (Hip=0, Spine=7, Thorax=8)
         pts_A = pose_A[[0, 7, 8], :]
         pts_B = pose_B[[0, 7, 8], :]
         pA = {ax: np.polyfit(t_poly, pts_A[:, i], deg=2) for i, ax in enumerate(["X","Y","Z"])}
         pB = {ax: np.polyfit(t_poly, pts_B[:, i], deg=2) for i, ax in enumerate(["X","Y","Z"])}
+        frame_data.append({
+            "fi":               fi,
+            "user_frame_no":    a_indices[pos],
+            "ref_frame_no":     b_indices[pos],
+            "pose_A":           pose_A,
+            "pose_B":           pose_B,
+            "pA":               pA,
+            "pB":               pB,
+        })
 
-        # GPT spine analysis
-        spine_text = _gpt_spine(pA, pB, fi, openai_api_key)
+    # ── GPT calls in parallel ─────────────────────────────────────────────────
+    with ThreadPoolExecutor(max_workers=N_SELECTED_FRAMES) as pool:
+        gpt_futures = [
+            pool.submit(_gpt_spine, fd["pA"], fd["pB"], fd["fi"], openai_api_key)
+            for fd in frame_data
+        ]
+        spine_texts = [f.result() for f in gpt_futures]
 
-        # Video frames
-        user_img = _extract_frame_b64(user_video_bytes, user_vid_frame_no)
-        ref_img  = _extract_frame_b64(ref_video_bytes,  ref_vid_frame_no)
+    # ── Batch frame extraction (open each video once) ─────────────────────────
+    user_frame_nos = [fd["user_frame_no"] for fd in frame_data]
+    ref_frame_nos  = [fd["ref_frame_no"]  for fd in frame_data]
+    user_imgs = _extract_frames_b64(user_video_bytes, user_frame_nos)
+    ref_imgs  = _extract_frames_b64(ref_video_bytes,  ref_frame_nos)
 
+    # ── Assemble payload ───────────────────────────────────────────────────────
+    frames_out = []
+    for fi, fd in enumerate(frame_data):
+        pose_A, pose_B = fd["pose_A"], fd["pose_B"]
         frames_out.append({
             "idx":               fi,
-            "user_frame_no":     user_vid_frame_no,
-            "ref_frame_no":      ref_vid_frame_no,
-            "user_image":        user_img,
-            "ref_image":         ref_img,
-            "right_knee_you":    round(rk_you, 1),
-            "right_knee_ref":    round(rk_ref, 1),
-            "left_knee_you":     round(lk_you, 1),
-            "left_knee_ref":     round(lk_ref, 1),
-            "right_hip_you":     round(rh_you, 1),
-            "right_hip_ref":     round(rh_ref, 1),
-            "left_hip_you":      round(lh_you, 1),
-            "left_hip_ref":      round(lh_ref, 1),
-            "spine_coaching":    spine_text,
+            "user_frame_no":     fd["user_frame_no"],
+            "ref_frame_no":      fd["ref_frame_no"],
+            "user_image":        user_imgs[fi],
+            "ref_image":         ref_imgs[fi],
+            "right_knee_you":    round(_knee(pose_A[1], pose_A[2], pose_A[3]), 1),
+            "right_knee_ref":    round(_knee(pose_B[1], pose_B[2], pose_B[3]), 1),
+            "left_knee_you":     round(_knee(pose_A[4], pose_A[5], pose_A[6]), 1),
+            "left_knee_ref":     round(_knee(pose_B[4], pose_B[5], pose_B[6]), 1),
+            "right_hip_you":     round(_hip(pose_A[0], pose_A[1], pose_A[7]), 1),
+            "right_hip_ref":     round(_hip(pose_B[0], pose_B[1], pose_B[7]), 1),
+            "left_hip_you":      round(_hip(pose_A[0], pose_A[4], pose_A[7]), 1),
+            "left_hip_ref":      round(_hip(pose_B[0], pose_B[4], pose_B[7]), 1),
+            "spine_coaching":    spine_texts[fi],
         })
 
     return {

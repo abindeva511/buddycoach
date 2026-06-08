@@ -25,8 +25,9 @@ def register_exercise_video(exercise_id: int, user=Depends(get_current_user), db
     # Parse bucket + key from S3 URL
     # e.g. https://buddy-coach-trainer.s3.us-east-1.amazonaws.com/exercises/Front_Raise.mp4
     try:
-        bucket = s3_url.split('//')[1].split('.s3.')[0]
-        key = unquote(s3_url.split('.amazonaws.com/')[-1].strip('/'))
+        clean_url = s3_url.split('?')[0]  # strip query params (URL may be a presigned URL)
+        bucket = clean_url.split('//')[1].split('.s3.')[0]
+        key = unquote(clean_url.split('.amazonaws.com/')[-1].strip('/'))
         obj = s3.get_object(Bucket=bucket, Key=key)
         video_bytes = obj['Body'].read()
     except Exception as e:

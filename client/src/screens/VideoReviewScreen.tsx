@@ -20,7 +20,7 @@ import Slider from '@react-native-community/slider';
 import { colors, spacing, borderRadius } from '../theme/forgefit';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
-import api from '../api/api';
+import api, { getAccessToken } from '../api/api';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'VideoReview'>;
 
@@ -394,8 +394,15 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
   const refVideoRef = useRef<Video>(null);
   const webFileInputRef = useRef<HTMLInputElement>(null);
   
-  // Reference video URL from exercise
-  const referenceVideoUrl = exercise.video_url;
+  // Reference video URL — fetch via EC2 proxy to avoid S3 CORS issues
+  const [referenceVideoUrl, setReferenceVideoUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (exercise.has_video && exercise.id) {
+      setReferenceVideoUrl(
+        `${api.defaults.baseURL}/api/v1/exercises/${exercise.id}/video`
+      );
+    }
+  }, [exercise.id]);
 
   // Angle edit handlers factory
   const makeAngleHandlers = (
@@ -623,24 +630,35 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
     
     setIsUploading(true);
     setAnalyzeError(null);
-    setAnalyzeStep('Preparing video...');
     
     try {
       const formData = new FormData();
-      
-      if (Platform.OS === 'web') {
-        formData.append('file', userVideoFile!, userVideoFile!.name || 'workout.mp4');
-      } else {
-        const filename = userVideo.split('/').pop() ?? 'workout.mp4';
-        formData.append('file', {
-          uri: userVideo,
-          name: filename,
-          type: 'video/mp4',
-        } as any);
-      }
 
       setAnalyzeStep('Uploading your video...');
-      const uploadRes = await api.post('/api/v1/files', formData);
+      let uploadRes: { data: { id: string; filename: string } };
+
+      if (Platform.OS === 'web') {
+        formData.append('file', userVideoFile!, userVideoFile!.name || 'workout.mp4');
+        uploadRes = await api.post('/api/v1/files', formData);
+      } else {
+        // On native, use fetch instead of axios/XHR — avoids FormData serialisation
+        // issues that affect XMLHttpRequest in React Native's new architecture.
+        const filename = userVideo.split('/').pop() ?? 'workout.mp4';
+        formData.append('file', { uri: userVideo, name: filename, type: 'video/mp4' } as any);
+        const token = getAccessToken();
+        const nativeResp = await fetch(`${api.defaults.baseURL}/api/v1/files`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+        });
+        if (!nativeResp.ok) {
+          const errData = await nativeResp.json().catch(() => ({ detail: 'Upload failed' }));
+          throw Object.assign(new Error(errData.detail || 'Upload failed'), {
+            response: { status: nativeResp.status, data: errData },
+          });
+        }
+        uploadRes = { data: await nativeResp.json() };
+      }
 
       // Fetch + upload reference video in parallel with starting user analysis
       let refFileId: string | null = null;
@@ -650,7 +668,6 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
           // Backend pulls from S3 directly — no CORS, no blob transfer
           const refUploadRes = await api.post(`/api/v1/files/from-exercise/${exercise.id}`);
           refFileId = refUploadRes.data.id;
-          console.log('[VideoReview] ref registered ok, file_id=', refFileId);
         } catch (refErr) {
           console.warn('[VideoReview] reference video registration failed, continuing user only', refErr);
         }
@@ -689,7 +706,7 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
       }
 
       setAnalyzeStep(null);
-      navigation.navigate('Result', { result: combinedResult });
+      navigation.navigate('Result', { result: combinedResult, exercise });
     } catch (e: any) {
       const status = e.response?.status;
       const detail = e.response?.data?.detail ?? e.response?.data?.message;

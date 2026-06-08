@@ -10,7 +10,7 @@ import {
   Image,
 } from "react-native";
 import { Video, ResizeMode } from "expo-av";
-import api from "../api/api";
+import api, { getAccessToken } from "../api/api";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList, ComparisonFrame } from "../navigation/types";
 import { colors, shadows } from "../theme/colors";
@@ -82,11 +82,13 @@ function FrameCard({ frame, index }: { frame: ComparisonFrame; index: number }) 
 }
 
 export default function ResultScreen({ route, navigation }: Props) {
-  const { result } = route.params;
+  const { result, exercise } = route.params;
   const [isLoadingVideo, setIsLoadingVideo] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoAuthHeaders, setVideoAuthHeaders] = useState<Record<string, string>>({});
   const [isLoadingRefVideo, setIsLoadingRefVideo] = useState(false);
   const [refVideoUrl, setRefVideoUrl] = useState<string | null>(null);
+  const [refVideoAuthHeaders, setRefVideoAuthHeaders] = useState<Record<string, string>>({});
 
   // Calculate a simple score based on result (placeholder logic)
   const score = Math.floor(Math.random() * 20) + 80; // 80-100 for demo
@@ -98,21 +100,6 @@ export default function ResultScreen({ route, navigation }: Props) {
   const refVideoDownloadUrl = result.reference_video_download_url;
   const refVideoAvailable = refVideoDownloadUrl != null;
   const refPoseDownloadUrl = result.reference_download_url;
-
-  // Debug: log what the backend returned
-  console.log('[ResultScreen] result keys:', JSON.stringify({
-    analysis_id: result.analysis_id,
-    download_url: result.download_url,
-    video_available: result.video_available,
-    video_download_url: result.video_download_url,
-    reference_analysis_id: result.reference_analysis_id,
-    reference_download_url: result.reference_download_url,
-    reference_video_available: result.reference_video_available,
-    reference_video_download_url: result.reference_video_download_url,
-    has_comparison: !!result.comparison,
-    comparison_frames: result.comparison?.frames?.length ?? 0,
-    dtw_cost: result.comparison?.dtw_cost,
-  }));
 
   const downloadFile = async (downloadUrl: string, filename: string) => {
     if (!downloadUrl) return;
@@ -140,17 +127,29 @@ export default function ResultScreen({ route, navigation }: Props) {
     }
   };
 
+  // Build the absolute URL for a relative backend path
+  const toAbsUrl = (url: string) =>
+    url.startsWith('http') ? url : `${api.defaults.baseURL}${url}`;
+
   // Load preview of rendered video
   const loadVideoPreview = async () => {
     if (!videoDownloadUrl) return;
+
+    if (Platform.OS !== 'web') {
+      // On native, expo-av can stream directly via HTTP with an Authorization header.
+      // URL.createObjectURL does not exist in React Native.
+      const token = getAccessToken();
+      setVideoUrl(toAbsUrl(videoDownloadUrl));
+      if (token) setVideoAuthHeaders({ Authorization: `Bearer ${token}` });
+      return;
+    }
+
+    // Web: fetch as authenticated blob then create an object URL
     try {
       setIsLoadingVideo(true);
-      const response = await api.get(videoDownloadUrl, {
-        responseType: 'blob',
-      });
+      const response = await api.get(videoDownloadUrl, { responseType: 'blob' });
       const blob = new Blob([response.data], { type: 'video/mp4' });
-      const url = URL.createObjectURL(blob);
-      setVideoUrl(url);
+      setVideoUrl(URL.createObjectURL(blob));
     } catch (e: any) {
       console.error('Failed to load video preview:', e.message);
     } finally {
@@ -160,6 +159,14 @@ export default function ResultScreen({ route, navigation }: Props) {
 
   const loadRefVideoPreview = async () => {
     if (!refVideoDownloadUrl) return;
+
+    if (Platform.OS !== 'web') {
+      const token = getAccessToken();
+      setRefVideoUrl(toAbsUrl(refVideoDownloadUrl));
+      if (token) setRefVideoAuthHeaders({ Authorization: `Bearer ${token}` });
+      return;
+    }
+
     try {
       setIsLoadingRefVideo(true);
       const response = await api.get(refVideoDownloadUrl, { responseType: 'blob' });
@@ -180,10 +187,10 @@ export default function ResultScreen({ route, navigation }: Props) {
   }, [videoAvailable, videoDownloadUrl]);
 
   useEffect(() => {
-    if (refVideoAvailable && refVideoDownloadUrl) {
+    if (refVideoAvailable) {
       loadRefVideoPreview();
     }
-  }, [refVideoAvailable, refVideoDownloadUrl]);
+  }, [refVideoAvailable]);
 
   const downloadNpy = async () => {
     await downloadFile(poseDownloadUrl, `pose3d_${result.analysis_id ?? 'result'}.npz`);
@@ -220,7 +227,7 @@ export default function ResultScreen({ route, navigation }: Props) {
             {videoUrl ? (
               <View style={styles.videoContainer}>
                 <Video
-                  source={{ uri: videoUrl }}
+                  source={{ uri: videoUrl, headers: videoAuthHeaders }}
                   style={styles.videoPlayer}
                   resizeMode={ResizeMode.CONTAIN}
                   useNativeControls
@@ -253,7 +260,7 @@ export default function ResultScreen({ route, navigation }: Props) {
             {refVideoUrl ? (
               <View style={styles.videoContainer}>
                 <Video
-                  source={{ uri: refVideoUrl }}
+                  source={{ uri: refVideoUrl, headers: refVideoAuthHeaders }}
                   style={styles.videoPlayer}
                   resizeMode={ResizeMode.CONTAIN}
                   useNativeControls

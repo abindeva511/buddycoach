@@ -81,7 +81,7 @@ def _ensure_pretrained() -> None:
         logger.info("[SKIP] Pretrained model already downloaded.")
 
 
-def run_pipeline(video_bytes: bytes, stem: str = "input") -> tuple[bytes, bytes | None]:
+def run_pipeline(video_bytes: bytes, stem: str = "input", render: bool = True) -> tuple[bytes, bytes | None]:
     """
     Execute the full VideoPose3D pipeline on *video_bytes*.
 
@@ -110,11 +110,20 @@ def run_pipeline(video_bytes: bytes, stem: str = "input") -> tuple[bytes, bytes 
         with open(input_video, "wb") as fh:
             fh.write(video_bytes)
 
+        # Step 1b: Downsample to 15 fps and cap height at 720p to cut Detectron2 work in half
+        downsampled = os.path.join(vid_dir, f"{stem}_ds.mp4")
+        _run(
+            f"ffmpeg -y -i {shlex.quote(input_video)} "
+            "-vf 'fps=15,scale=-2:min(ih\\,720)' "
+            f"-c:v libx264 -crf 23 -preset fast -an {shlex.quote(downsampled)}"
+        )
+        os.replace(downsampled, input_video)
+
         # Ensure repo + pretrained model are ready
         _ensure_repo()
         _ensure_pretrained()
 
-        # Step 2: 2D keypoint detection with Detectron2
+        # Step 2: 2D keypoint detection with Detectron2 (R-101 backbone — best accuracy)
         _run(
             f"{shlex.quote(_PY)} infer_video_d2.py "
             "--cfg COCO-Keypoints/keypoint_rcnn_R_101_FPN_3x.yaml "
@@ -130,22 +139,27 @@ def run_pipeline(video_bytes: bytes, stem: str = "input") -> tuple[bytes, bytes 
             cwd=_DATA_DIR,
         )
 
-        # Step 4: export raw 3D pose data (.npz) + rendered video
+        # Step 4: export raw 3D pose data (.npz) + optionally rendered video
         export_base = os.path.join(job_dir, stem)
         output_video = f"{export_base}_rendered.mp4"
+        render_flags = (
+            "--render "
+            f"--viz-video {shlex.quote(input_video)} "
+            f"--viz-export {shlex.quote(export_base)} "
+            f"--viz-output {shlex.quote(output_video)} "
+            "--viz-size 3"
+        ) if render else (
+            f"--viz-export {shlex.quote(export_base)}"
+        )
         _run(
             f"{shlex.quote(_PY)} run.py "
             "-d custom -k myvideos "
             "-arc 3,3,3,3,3 "
             f"-c checkpoint --evaluate {shlex.quote(_PRETRAINED)} "
-            "--render "
             f"--viz-subject {shlex.quote(stem + '.mp4')} "
             "--viz-action custom "
             "--viz-camera 0 "
-            f"--viz-video {shlex.quote(input_video)} "
-            f"--viz-export {shlex.quote(export_base)} "
-            f"--viz-output {shlex.quote(output_video)} "
-            "--viz-size 6",
+            f"{render_flags}",
             cwd=_REPO_DIR,
         )
 

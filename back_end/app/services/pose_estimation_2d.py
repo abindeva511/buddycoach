@@ -10,7 +10,6 @@ No VideoPose3D, no 3D lifting — Detectron2 output only.
 from __future__ import annotations
 
 import io
-import json
 import logging
 import os
 import re
@@ -54,50 +53,44 @@ def _ensure_repo() -> None:
         logger.info("[SKIP] VideoPose3D repo already present.")
 
 
-def _parse_detectron_json(out_dir: str, stem: str) -> np.ndarray:
+def _parse_detectron_npz(out_dir: str, stem: str) -> np.ndarray:
     """
-    Read the JSON file produced by infer_video_d2.py and return
+    Read the .npz file produced by infer_video_d2.py and return
     a (T, 17, 2) float32 array of (x, y) keypoints.
 
-    Detectron2's infer_video_d2.py writes one JSON per video named
-    <stem>.mp4.json (or <stem>.json depending on version).
-    Each entry is a list of person detections per frame; we pick
-    the highest-confidence person per frame.
+    infer_video_d2.py writes:  {out_dir}/{stem}.mp4.npz
+    Structure:
+      keypoints: object array of shape (T,), each element is
+                 [[], kps] where kps is (N_persons, 4, 17)
+                 channels 0,1 = x,y  channel 3 = confidence
     """
-    candidates = [
-        os.path.join(out_dir, f"{stem}.mp4.json"),
-        os.path.join(out_dir, f"{stem}.json"),
-    ]
-    json_path = next((p for p in candidates if os.path.exists(p)), None)
-    if json_path is None:
-        # Fallback: find any .json in the output dir
-        jsons = [f for f in os.listdir(out_dir) if f.endswith(".json")]
-        if not jsons:
-            raise FileNotFoundError(f"No Detectron2 JSON found in {out_dir}")
-        json_path = os.path.join(out_dir, jsons[0])
-        logger.warning("Using fallback JSON: %s", json_path)
+    npz_path = os.path.join(out_dir, f"{stem}.mp4.npz")
+    if not os.path.exists(npz_path):
+        # fallback: find any .npz in the output dir
+        npzs = [f for f in os.listdir(out_dir) if f.endswith(".npz")]
+        if not npzs:
+            raise FileNotFoundError(f"No Detectron2 .npz found in {out_dir}")
+        npz_path = os.path.join(out_dir, npzs[0])
+        logger.warning("Using fallback npz: %s", npz_path)
 
-    with open(json_path) as f:
-        data = json.load(f)
+    data = np.load(npz_path, allow_pickle=True)
+    keypoints_raw = data["keypoints"]   # object array (T,), each = [[], kps_or_[]]
 
-    # data is a list of frames; each frame is a list of detections.
-    # Each detection: {"keypoints": [x, y, score, x, y, score, ...]}
     frames: list[np.ndarray] = []
-    for frame_detections in data:
-        if not frame_detections:
-            # No person detected — repeat last frame or zeros
+    for frame_entry in keypoints_raw:
+        # frame_entry[1] is either [] (no detection) or (N_persons, 4, 17)
+        kps_list = frame_entry[1]
+        if not hasattr(kps_list, "__len__") or len(kps_list) == 0:
             kpts = frames[-1].copy() if frames else np.zeros((17, 2), dtype=np.float32)
         else:
-            # Pick detection with highest mean keypoint score
-            best = max(
-                frame_detections,
-                key=lambda d: np.array(d["keypoints"]).reshape(-1, 3)[:, 2].mean(),
-            )
-            raw = np.array(best["keypoints"], dtype=np.float32).reshape(17, 3)
-            kpts = raw[:, :2]  # drop confidence column → (17, 2)
-        frames.append(kpts)
+            kps_arr = np.array(kps_list, dtype=np.float32)  # (N_persons, 4, 17)
+            # Pick person with highest mean confidence (channel 3)
+            scores = kps_arr[:, 3, :].mean(axis=1)          # (N_persons,)
+            best = int(scores.argmax())
+            kpts = kps_arr[best, :2, :].T                   # (17, 2)  x,y
+        frames.append(kpts.astype(np.float32))
 
-    return np.stack(frames, axis=0)  # (T, 17, 2)
+    return np.stack(frames, axis=0)   # (T, 17, 2)
 
 
 def run_pipeline_2d(video_bytes: bytes, stem: str = "input") -> bytes:
@@ -142,8 +135,8 @@ def run_pipeline_2d(video_bytes: bytes, stem: str = "input") -> bytes:
             cwd=_INFERENCE_DIR,
         )
 
-        # Parse JSON → (T, 17, 2) numpy array
-        kpts = _parse_detectron_json(out_dir, stem)
+        # Parse Detectron2 .npz → (T, 17, 2) numpy array
+        kpts = _parse_detectron_npz(out_dir, stem)
         logger.info("2D pipeline complete — %d frames, shape %s", kpts.shape[0], kpts.shape)
 
         # Save as .npz

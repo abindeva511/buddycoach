@@ -11,7 +11,9 @@ from app.models.analysis import Analysis
 from app.models.file import File
 from app.utils.s3 import download_file, upload_bytes
 from app.services.pose_estimation import run_pipeline
+from app.services.pose_estimation_2d import run_pipeline_2d
 from app.services.comparison import run_comparison
+from app.services.comparison_2d import run_comparison_2d
 from app.core.config import settings
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -337,3 +339,121 @@ async def analyze_pose3d_reference(
         "download_url": f"/api/v1/analysis/{analysis.id}/download",
         "video_available": False,
     }
+
+
+# ── 2D Pose Estimation ─────────────────────────────────────────────────────────
+
+@router.post("/pose2d")
+async def analyze_pose2d(
+    data: dict,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Run Detectron2 2D keypoint detection on a previously uploaded video.
+    Skips VideoPose3D entirely — returns (T, 17, 2) COCO keypoints as .npz.
+
+    Request body:  { "file_id": "<str>" }
+    Response:      { "analysis_id", "processing_time_seconds", "download_url" }
+    """
+    file = db.get(File, data["file_id"])
+    if not file or file.user_id != user.id:
+        raise HTTPException(404, "File not found")
+
+    video_bytes = download_file(file.s3_key)
+    stem = os.path.splitext(file.original_filename)[0] if file.original_filename else "workout"
+
+    start = time.time()
+
+    def _run_2d(vb: bytes, s: str) -> bytes:
+        try:
+            return run_pipeline_2d(vb, stem=s)
+        except Exception as exc:
+            import traceback, os as _os
+            print(f"\n[pose2d] Pipeline failed: {exc}\n{traceback.format_exc()}")
+            if _os.path.exists("/home/ubuntu"):
+                raise
+            # Local fallback: mock (30, 17, 2) zeros
+            import numpy as np, io as _io
+            buf = _io.BytesIO()
+            np.savez_compressed(buf, keypoints_2d=np.zeros((30, 17, 2), dtype=np.float32))
+            return buf.getvalue()
+
+    npz_bytes = await run_in_threadpool(_run_2d, video_bytes, stem)
+    duration = int(time.time() - start)
+
+    result_key = upload_bytes(
+        npz_bytes,
+        user_id=user.id,
+        filename=f"{stem}_pose2d.npz",
+        content_type="application/octet-stream",
+    )
+
+    analysis = Analysis(
+        user_id=user.id,
+        file_id=file.id,
+        analysis_type="pose2d",
+        analysis_result=result_key,
+        video_result=None,
+        processing_time_seconds=duration,
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+
+    return {
+        "analysis_id": analysis.id,
+        "processing_time_seconds": duration,
+        "download_url": f"/api/v1/analysis/{analysis.id}/download",
+        "video_available": False,
+        "video_download_url": None,
+    }
+
+
+@router.post("/compare2d")
+async def compare_poses_2d(
+    data: dict,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Run 2D DTW alignment + joint angle analysis + GPT spine coaching.
+    Same request/response shape as /compare so the frontend needs no changes.
+
+    Request body:  { "user_analysis_id": "<str>", "ref_analysis_id": "<str>" }
+    """
+    user_analysis_id = data.get("user_analysis_id")
+    ref_analysis_id  = data.get("ref_analysis_id")
+
+    if not user_analysis_id or not ref_analysis_id:
+        raise HTTPException(400, "user_analysis_id and ref_analysis_id are required")
+
+    user_analysis = db.get(Analysis, user_analysis_id)
+    ref_analysis  = db.get(Analysis, ref_analysis_id)
+
+    if not user_analysis or user_analysis.user_id != user.id:
+        raise HTTPException(404, "User analysis not found")
+    if not ref_analysis:
+        raise HTTPException(404, "Reference analysis not found")
+
+    user_npz_bytes = download_file(user_analysis.analysis_result)
+    ref_npz_bytes  = download_file(ref_analysis.analysis_result)
+
+    user_file = db.get(File, user_analysis.file_id)
+    ref_file  = db.get(File, ref_analysis.file_id) if ref_analysis.file_id else None
+
+    if not user_file:
+        raise HTTPException(500, "Could not locate user video file")
+
+    user_video_bytes = download_file(user_file.s3_key)
+    ref_video_bytes  = download_file(ref_file.s3_key) if ref_file else user_video_bytes
+
+    result = await run_in_threadpool(
+        run_comparison_2d,
+        user_npz_bytes,
+        ref_npz_bytes,
+        user_video_bytes,
+        ref_video_bytes,
+        settings.OPENAI_API_KEY,
+    )
+    return result

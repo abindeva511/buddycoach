@@ -621,6 +621,106 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
     }
   };
 
+  // ── Shared upload helper (used by both analyze functions) ──────────────────
+  const uploadUserVideo = async (): Promise<{ id: string; filename: string }> => {
+    const formData = new FormData();
+    if (Platform.OS === 'web') {
+      formData.append('file', userVideoFile!, userVideoFile!.name || 'workout.mp4');
+      const res = await api.post('/api/v1/files', formData);
+      return res.data;
+    } else {
+      const filename = userVideo.split('/').pop() ?? 'workout.mp4';
+      formData.append('file', { uri: userVideo, name: filename, type: 'video/mp4' } as any);
+      const token = getAccessToken();
+      const nativeResp = await fetch(`${api.defaults.baseURL}/api/v1/files`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (!nativeResp.ok) {
+        const errData = await nativeResp.json().catch(() => ({ detail: 'Upload failed' }));
+        throw Object.assign(new Error(errData.detail || 'Upload failed'), {
+          response: { status: nativeResp.status, data: errData },
+        });
+      }
+      return nativeResp.json();
+    }
+  };
+
+  // ── Form Analysis (2D — Detectron2 only, no VideoPose3D) ──────────────────
+  const formAnalysis = async () => {
+    if (!userVideo) return;
+    if (Platform.OS === 'web' && !userVideoFile) {
+      setAnalyzeError('Please re-select your video using the Change Video button.');
+      return;
+    }
+
+    setIsUploading(true);
+    setAnalyzeError(null);
+
+    try {
+      setAnalyzeStep('Uploading your video...');
+      const uploadedFile = await uploadUserVideo();
+
+      // Register reference video on backend (S3 → uploads bucket)
+      let refFileId: string | null = null;
+      if (exercise.has_video) {
+        try {
+          setAnalyzeStep('Preparing reference video...');
+          const refUploadRes = await api.post(`/api/v1/files/from-exercise/${exercise.id}`);
+          refFileId = refUploadRes.data.id;
+        } catch {
+          // continue without reference
+        }
+      }
+
+      setAnalyzeStep('Running 2D pose detection...');
+      const [userAnalysisRes, refAnalysisRes] = await Promise.all([
+        api.post('/api/v1/analysis/pose2d', { file_id: uploadedFile.id }),
+        refFileId
+          ? api.post('/api/v1/analysis/pose2d', { file_id: refFileId })
+          : Promise.resolve(null),
+      ]);
+
+      const combinedResult: any = {
+        ...userAnalysisRes.data,
+        ...(refAnalysisRes ? {
+          reference_analysis_id:        refAnalysisRes.data.analysis_id,
+          reference_download_url:       refAnalysisRes.data.download_url,
+          reference_video_available:    false,
+          reference_video_download_url: null,
+        } : {}),
+      };
+
+      if (refAnalysisRes) {
+        try {
+          setAnalyzeStep('Comparing form frame by frame...');
+          const compareRes = await api.post('/api/v1/analysis/compare2d', {
+            user_analysis_id: userAnalysisRes.data.analysis_id,
+            ref_analysis_id:  refAnalysisRes.data.analysis_id,
+          });
+          combinedResult.comparison = compareRes.data;
+        } catch (cmpErr: any) {
+          console.warn('[VideoReview] 2D comparison failed:', cmpErr?.message);
+        }
+      }
+
+      setAnalyzeStep(null);
+      navigation.navigate('Result', { result: combinedResult, exercise });
+    } catch (e: any) {
+      const status = e.response?.status;
+      const detail = e.response?.data?.detail ?? e.response?.data?.message;
+      const msg = status
+        ? `HTTP ${status}: ${detail ?? JSON.stringify(e.response?.data ?? '')}`
+        : (e.message ?? 'Something went wrong');
+      setAnalyzeError(`[${analyzeStep ?? 'init'}] ${msg}`);
+      setAnalyzeStep(null);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // ── Advanced Form Analysis (3D — full VideoPose3D pipeline) ───────────────
   const analyzeWorkout = async () => {
     if (!userVideo) return;
     if (Platform.OS === 'web' && !userVideoFile) {
@@ -632,40 +732,14 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
     setAnalyzeError(null);
     
     try {
-      const formData = new FormData();
-
       setAnalyzeStep('Uploading your video...');
-      let uploadRes: { data: { id: string; filename: string } };
-
-      if (Platform.OS === 'web') {
-        formData.append('file', userVideoFile!, userVideoFile!.name || 'workout.mp4');
-        uploadRes = await api.post('/api/v1/files', formData);
-      } else {
-        // On native, use fetch instead of axios/XHR — avoids FormData serialisation
-        // issues that affect XMLHttpRequest in React Native's new architecture.
-        const filename = userVideo.split('/').pop() ?? 'workout.mp4';
-        formData.append('file', { uri: userVideo, name: filename, type: 'video/mp4' } as any);
-        const token = getAccessToken();
-        const nativeResp = await fetch(`${api.defaults.baseURL}/api/v1/files`, {
-          method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
-        });
-        if (!nativeResp.ok) {
-          const errData = await nativeResp.json().catch(() => ({ detail: 'Upload failed' }));
-          throw Object.assign(new Error(errData.detail || 'Upload failed'), {
-            response: { status: nativeResp.status, data: errData },
-          });
-        }
-        uploadRes = { data: await nativeResp.json() };
-      }
+      const uploadedFile = await uploadUserVideo();
 
       // Fetch + upload reference video in parallel with starting user analysis
       let refFileId: string | null = null;
       if (exercise.has_video) {
         try {
           setAnalyzeStep('Preparing reference video...');
-          // Backend pulls from S3 directly — no CORS, no blob transfer
           const refUploadRes = await api.post(`/api/v1/files/from-exercise/${exercise.id}`);
           refFileId = refUploadRes.data.id;
         } catch (refErr) {
@@ -675,7 +749,7 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
 
       setAnalyzeStep('Running pose analysis on both videos...');
       const [userAnalysisRes, refAnalysisRes] = await Promise.all([
-        api.post('/api/v1/analysis/pose3d', { file_id: uploadRes.data.id }),
+        api.post('/api/v1/analysis/pose3d', { file_id: uploadedFile.id }),
         refFileId
           ? api.post('/api/v1/analysis/pose3d', { file_id: refFileId })
           : Promise.resolve(null),
@@ -955,6 +1029,17 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
           </TouchableOpacity>
 
           <TouchableOpacity
+            style={[styles.formAnalysisButton, isUploading && styles.analyzeButtonDisabled]}
+            onPress={formAnalysis}
+            disabled={isUploading}
+          >
+            <Text style={styles.formAnalysisButtonIcon}>📋</Text>
+            <Text style={styles.formAnalysisButtonText}>
+              {isUploading ? (analyzeStep || 'Processing...') : 'Form Analysis'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={[styles.analyzeButton, isUploading && styles.analyzeButtonDisabled]}
             onPress={analyzeWorkout}
             disabled={isUploading}
@@ -966,8 +1051,8 @@ export default function VideoReviewScreen({ navigation, route }: Props) {
               </>
             ) : (
               <>
-                <Text style={styles.analyzeButtonIcon}>🎯</Text>
-                <Text style={styles.analyzeButtonText}>Analyze My Form</Text>
+                <Text style={styles.analyzeButtonIcon}>🚀</Text>
+                <Text style={styles.analyzeButtonText}>Advanced Form Analysis</Text>
               </>
             )}
           </TouchableOpacity>
@@ -1154,6 +1239,19 @@ const styles = StyleSheet.create({
   },
   changeVideoIcon: { fontSize: 18 },
   changeVideoText: { fontSize: 15, fontWeight: '600', color: colors.text },
+  formAnalysisButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    paddingVertical: spacing.lg,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: colors.accent,
+    gap: spacing.sm,
+  },
+  formAnalysisButtonIcon: { fontSize: 20 },
+  formAnalysisButtonText: { fontSize: 17, fontWeight: '700', color: colors.accent },
   analyzeButton: {
     flexDirection: 'row',
     alignItems: 'center',

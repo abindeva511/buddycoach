@@ -1386,7 +1386,7 @@ const styles = StyleSheet.create({
   },
   videoContainer: {
     width: '100%',
-    aspectRatio: 4 / 3,
+    aspectRatio: 9 / 16,
     backgroundColor: colors.surface2,
     borderRadius: borderRadius.lg,
     overflow: 'hidden',
@@ -1483,7 +1483,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   comparisonVideoBox: {
-    height: VIDEO_HEIGHT,
+    aspectRatio: 9 / 16,
     backgroundColor: colors.surface2,
     borderRadius: borderRadius.md,
     overflow: 'hidden',

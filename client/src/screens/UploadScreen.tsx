@@ -100,7 +100,7 @@ export default function UploadScreen({ route, navigation }: Props) {
 
       const upload = await api.post("/api/v1/files", formData);
 
-      const analysis = await api.post("/api/v1/analysis/pose3d", {
+      const analysis = await api.post("/api/v1/analysis/pose2d", {
         file_id: upload.data.id,
       });
 

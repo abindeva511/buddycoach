@@ -193,6 +193,7 @@ def knee_angle_2d(hip: np.ndarray, knee: np.ndarray, ankle: np.ndarray) -> float
     return _angle_2d(knee - hip, ankle - knee)
 
 
-def hip_angle_2d(hip: np.ndarray, knee_joint: np.ndarray, spine: np.ndarray) -> float:
-    """Hip angle between spine direction and thigh direction."""
-    return _angle_2d(spine - hip, knee_joint - hip)
+def hip_angle_2d(shoulder: np.ndarray, hip: np.ndarray, knee: np.ndarray) -> float:
+    """Hip flexion angle: angle at the hip joint between trunk (shoulder→hip) and thigh (hip→knee).
+    ~180° = standing, ~90° = squat depth."""
+    return _angle_2d(shoulder - hip, knee - hip)

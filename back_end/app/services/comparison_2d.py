@@ -82,19 +82,21 @@ def _gpt_spine_2d(poly_A: dict, poly_B: dict, frame_idx: int, api_key: str) -> s
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": (
-                    "You are a body movement coach. I will give you 2D spine curves "
-                    "measured from video (side-view). "
-                    "t=0 is Hip, t=1 is Mid-spine, t=2 is Thorax. "
-                    "X is horizontal (lean), Y is vertical (height). "
-                    "Explain in simple language: how curved each spine is, "
-                    "whether it leans forward or is upright, and compare them. "
-                    "Give a short summary (5 lines max), a simple comparison table, "
-                    "and a final verdict. No formulas, no math terms."
+                    "You are a friendly fitness coach giving feedback on exercise form. "
+                    "I will give you 2D spine curve data from two videos (side view). "
+                    "t=0 is hips, t=1 is mid-back, t=2 is shoulders. "
+                    "X = horizontal position (lean), Y = vertical (height). "
+                    "Reply in plain text only — no markdown, no hashtags, no bullet symbols, no tables. "
+                    "Use this exact structure with these exact labels on separate lines:\n"
+                    "SUMMARY: (1-2 sentences describing each person's posture)\n"
+                    "YOUR FORM: (1 sentence on what the user is doing)\n"
+                    "REFERENCE: (1 sentence on what the reference is doing)\n"
+                    "TIP: (1 concrete actionable tip to improve)"
                 )},
                 {"role": "user", "content": user_content},
             ],
             temperature=0.7,
-            max_tokens=600,
+            max_tokens=300,
         )
         return resp.choices[0].message.content
     except Exception as exc:
@@ -187,15 +189,15 @@ def run_comparison_2d(
             "ref_frame_no":      fd["ref_frame_no"],
             "user_image":        user_imgs[fi],
             "ref_image":         ref_imgs[fi],
-            # H36M indices: RHip=1 RKnee=2 RAnkle=3 LHip=4 LKnee=5 LAnkle=6 Spine=7
+            # H36M indices: RHip=1 RKnee=2 RAnkle=3 LHip=4 LKnee=5 LAnkle=6 LShoulder=11 RShoulder=14
             "right_knee_you":    round(knee_angle_2d(pA[1], pA[2], pA[3]), 1),
             "right_knee_ref":    round(knee_angle_2d(pB[1], pB[2], pB[3]), 1),
             "left_knee_you":     round(knee_angle_2d(pA[4], pA[5], pA[6]), 1),
             "left_knee_ref":     round(knee_angle_2d(pB[4], pB[5], pB[6]), 1),
-            "right_hip_you":     round(hip_angle_2d(pA[0], pA[1], pA[7]), 1),
-            "right_hip_ref":     round(hip_angle_2d(pB[0], pB[1], pB[7]), 1),
-            "left_hip_you":      round(hip_angle_2d(pA[0], pA[4], pA[7]), 1),
-            "left_hip_ref":      round(hip_angle_2d(pB[0], pB[4], pB[7]), 1),
+            "right_hip_you":     round(hip_angle_2d(pA[14], pA[1], pA[2]), 1),
+            "right_hip_ref":     round(hip_angle_2d(pB[14], pB[1], pB[2]), 1),
+            "left_hip_you":      round(hip_angle_2d(pA[11], pA[4], pA[5]), 1),
+            "left_hip_ref":      round(hip_angle_2d(pB[11], pB[4], pB[5]), 1),
             "spine_coaching":    spine_texts[fi],
         })
 

@@ -4,7 +4,7 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 
 // EC2 backend URL — update this when the EC2 IP changes
-const EC2_URL = "http://18.209.164.132:8000";
+const EC2_URL = "http://52.207.135.137:8000";
 
 const getBaseUrl = () => {
   const USE_EC2 = true;

@@ -1,15 +1,30 @@
 """
-2D Pose Estimation Service
-===========================
-Runs Detectron2 keypoint detection on a video and returns the raw
-2D keypoints as a compressed numpy array (T, 17, 2) saved as .npz.
+2D Pose Estimation Service (MediaPipe Tasks API)
+=================================================
+Uses MediaPipe PoseLandmarker (Tasks API, v0.10+) to detect 2D body keypoints.
+Output: (T, 17, 2) COCO-order keypoints as .npz — same contract as before.
 
-The Detectron2 predictor is loaded ONCE as a module-level singleton and
-kept in memory for the lifetime of the uvicorn process.  After the first
-request (~20s warm-up) every subsequent request only pays inference cost
-(~50-100 ms/frame on GPU, ~200-400 ms/frame on CPU).
+MediaPipe runs fully on CPU at ~30ms/frame (vs ~300ms/frame for Detectron2),
+making form analysis ~10x faster on CPU instances.
 
-No VideoPose3D, no 3D lifting — Detectron2 output only.
+MediaPipe 33-landmark → COCO 17 mapping:
+  COCO  0 Nose          ← MP  0
+  COCO  1 Left Eye      ← MP  2
+  COCO  2 Right Eye     ← MP  5
+  COCO  3 Left Ear      ← MP  7
+  COCO  4 Right Ear     ← MP  8
+  COCO  5 Left Shoulder ← MP 11
+  COCO  6 Right Shoulder← MP 12
+  COCO  7 Left Elbow    ← MP 13
+  COCO  8 Right Elbow   ← MP 14
+  COCO  9 Left Wrist    ← MP 15
+  COCO 10 Right Wrist   ← MP 16
+  COCO 11 Left Hip      ← MP 23
+  COCO 12 Right Hip     ← MP 24
+  COCO 13 Left Knee     ← MP 25
+  COCO 14 Right Knee    ← MP 26
+  COCO 15 Left Ankle    ← MP 27
+  COCO 16 Right Ankle   ← MP 28
 """
 
 from __future__ import annotations
@@ -19,125 +34,119 @@ import logging
 import os
 import re
 import subprocess
-import sys
 import tempfile
+import threading
+import urllib.request
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_WORK_ROOT = os.environ.get("POSE_WORK_DIR", "/tmp/videopose3d")
-_REPO_DIR  = os.path.join(_WORK_ROOT, "VideoPose3D")
+# MediaPipe landmark indices that map to COCO 17 keypoints (in order)
+_MP_TO_COCO = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
 
-# ── Singleton predictor ───────────────────────────────────────────────────────
-# Loaded once on first call; subsequent calls reuse the already-loaded model.
-_PREDICTOR = None
+_MODEL_PATH = "/tmp/pose_landmarker_lite.task"
+_MODEL_URL  = (
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
+    "pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+)
 
-
-def _get_predictor():
-    global _PREDICTOR
-    if _PREDICTOR is not None:
-        return _PREDICTOR
-
-    logger.info("[pose2d] Loading Detectron2 model (one-time warm-up)...")
-    try:
-        import detectron2
-        from detectron2.config import get_cfg
-        from detectron2 import model_zoo
-        from detectron2.engine import DefaultPredictor
-
-        # Add inference dir to path so model_zoo can resolve relative config paths
-        inf_dir = os.path.join(_REPO_DIR, "inference")
-        if inf_dir not in sys.path:
-            sys.path.insert(0, inf_dir)
-
-        cfg = get_cfg()
-        # R-50 is ~40% faster than R-101 with negligible accuracy loss for pose
-        cfg.merge_from_file(model_zoo.get_config_file(
-            "COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml"
-        ))
-        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7
-        cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(
-            "COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml"
-        )
-        _PREDICTOR = DefaultPredictor(cfg)
-        logger.info("[pose2d] Detectron2 model loaded and ready.")
-    except Exception as e:
-        logger.error("[pose2d] Failed to load Detectron2: %s", e)
-        raise
-    return _PREDICTOR
+# Thread-local storage: each thread gets its own PoseLandmarker instance
+# (VIDEO mode is stateful and not thread-safe)
+_thread_local = threading.local()
+# Global lock to prevent concurrent model downloads
+_download_lock = threading.Lock()
 
 
-def _ensure_repo() -> None:
-    if not os.path.exists(_REPO_DIR):
-        os.makedirs(_WORK_ROOT, exist_ok=True)
-        subprocess.run(
-            f"git clone https://github.com/abindeva511/videopose3d.git {_REPO_DIR}",
-            shell=True, check=True,
-        )
+def _get_pose():
+    # Each thread has its own instance (VIDEO mode is not thread-safe)
+    if getattr(_thread_local, "pose", None) is not None:
+        return _thread_local.pose
 
+    # Ensure model file is downloaded exactly once
+    if not os.path.exists(_MODEL_PATH):
+        with _download_lock:
+            if not os.path.exists(_MODEL_PATH):  # double-checked locking
+                logger.info("[pose2d] Downloading model to %s ...", _MODEL_PATH)
+                tmp_path = _MODEL_PATH + ".tmp"
+                urllib.request.urlretrieve(_MODEL_URL, tmp_path)
+                os.replace(tmp_path, _MODEL_PATH)
 
-def _read_video_frames(video_path: str):
-    """Decode video to raw BGR frames via ffmpeg pipe. Yields numpy (H,W,3)."""
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0", video_path],
-        stdout=subprocess.PIPE, check=True,
+    logger.info("[pose2d] Loading MediaPipe PoseLandmarker model (thread %s)...", threading.current_thread().name)
+
+    import mediapipe as mp
+    from mediapipe.tasks.python import BaseOptions
+    from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
+
+    options = PoseLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=_MODEL_PATH),
+        running_mode=RunningMode.VIDEO,
+        num_poses=1,
+        min_pose_detection_confidence=0.5,
+        min_pose_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
     )
-    w, h = map(int, probe.stdout.decode().strip().split(","))
-    pipe = subprocess.Popen(
-        ["ffmpeg", "-i", video_path, "-f", "image2pipe",
-         "-pix_fmt", "bgr24", "-vsync", "0", "-vcodec", "rawvideo", "-"],
-        stdout=subprocess.PIPE, bufsize=-1,
-    )
-    while True:
-        data = pipe.stdout.read(w * h * 3)
-        if not data:
-            break
-        yield np.frombuffer(data, dtype="uint8").reshape((h, w, 3))
-    pipe.wait()
+    _thread_local.pose = PoseLandmarker.create_from_options(options)
+    logger.info("[pose2d] MediaPipe PoseLandmarker ready.")
+    return _thread_local.pose
 
 
 def _infer_frames(video_path: str) -> np.ndarray:
     """
-    Run in-process Detectron2 on every frame of *video_path*.
-    Returns (T, 17, 2) float32 array of (x, y) keypoints in COCO order.
+    Run MediaPipe PoseLandmarker on every frame of *video_path*.
+    Returns (T, 17, 2) float32 array of (x, y) pixel keypoints in COCO order.
     """
-    predictor = _get_predictor()
-    frames: list[np.ndarray] = []
+    import cv2
+    import mediapipe as mp
 
-    for frame_i, im in enumerate(_read_video_frames(video_path)):
-        outputs = predictor(im)["instances"].to("cpu")
-        if outputs.has("pred_boxes") and len(outputs.pred_boxes) > 0:
-            kps = outputs.pred_keypoints.numpy()   # (N_persons, 17, 3)  x,y,score
-            # Pick person with highest mean keypoint score
-            best = int(kps[:, :, 2].mean(axis=1).argmax())
-            kpts = kps[best, :, :2].astype(np.float32)  # (17, 2)
+    landmarker = _get_pose()
+    cap = cv2.VideoCapture(video_path)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
+
+    frames: list[np.ndarray] = []
+    frame_i = 0
+    while True:
+        ret, bgr = cap.read()
+        if not ret:
+            break
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        timestamp_ms = int(frame_i * 1000 / fps)
+        result = landmarker.detect_for_video(mp_image, timestamp_ms)
+
+        if result.pose_landmarks:
+            lm = result.pose_landmarks[0]  # first (and only) person
+            kpts = np.array(
+                [[lm[idx].x * w, lm[idx].y * h] for idx in _MP_TO_COCO],
+                dtype=np.float32,
+            )  # (17, 2)
         else:
             kpts = frames[-1].copy() if frames else np.zeros((17, 2), dtype=np.float32)
         frames.append(kpts)
         if frame_i % 30 == 0:
             logger.info("[pose2d] frame %d done", frame_i)
+        frame_i += 1
 
-    return np.stack(frames, axis=0)   # (T, 17, 2)
+    cap.release()
+    return np.stack(frames, axis=0)  # (T, 17, 2)
 
 
 def run_pipeline_2d(video_bytes: bytes, stem: str = "input") -> bytes:
     """
-    Run in-process Detectron2 keypoint detection on *video_bytes*.
+    Run MediaPipe Pose on *video_bytes*.
 
     Returns .npz bytes with key 'keypoints_2d' → (T, 17, 2) COCO keypoints.
-    Model is loaded once and reused across calls.
     """
     stem = re.sub(r"[^\w.-]", "_", stem)
-    _ensure_repo()   # repo needed for sys.path only
 
     with tempfile.TemporaryDirectory(prefix="pose2d_") as job_dir:
         input_video = os.path.join(job_dir, f"{stem}.mp4")
         with open(input_video, "wb") as fh:
             fh.write(video_bytes)
 
-        # Downsample to 15 fps, max 720p — cuts inference frames in half
+        # Downsample to 15 fps, max 720p — keeps frame count manageable
         downsampled = os.path.join(job_dir, f"{stem}_ds.mp4")
         subprocess.run(
             ["ffmpeg", "-y", "-i", input_video,
@@ -150,6 +159,15 @@ def run_pipeline_2d(video_bytes: bytes, stem: str = "input") -> bytes:
 
         kpts = _infer_frames(input_video)
         logger.info("[pose2d] complete — %d frames %s", kpts.shape[0], kpts.shape)
+
+        # Reset the thread-local landmarker so the next video starts fresh
+        # (VIDEO mode requires monotonically increasing timestamps per instance)
+        if getattr(_thread_local, "pose", None) is not None:
+            try:
+                _thread_local.pose.close()
+            except Exception:
+                pass
+            _thread_local.pose = None
 
         buf = io.BytesIO()
         np.savez_compressed(buf, keypoints_2d=kpts)

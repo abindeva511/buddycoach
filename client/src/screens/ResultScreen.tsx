@@ -71,12 +71,48 @@ function FrameCard({ frame, index }: { frame: ComparisonFrame; index: number }) 
         })}
       </View>
       {/* GPT spine coaching */}
-      {!!frame.spine_coaching && (
-        <View style={frameStyles.coachingBox}>
-          <Text style={frameStyles.coachingLabel}>🧠 Spine Coaching</Text>
-          <Text style={frameStyles.coachingText}>{frame.spine_coaching}</Text>
-        </View>
-      )}
+      {!!frame.spine_coaching && (() => {
+        const text = frame.spine_coaching;
+        const extract = (label: string) => {
+          const match = text.match(new RegExp(`${label}:\\s*(.+?)(?=\\n[A-Z]+:|$)`, 's'));
+          return match ? match[1].trim() : null;
+        };
+        const summary   = extract('SUMMARY');
+        const yourForm  = extract('YOUR FORM');
+        const reference = extract('REFERENCE');
+        const tip       = extract('TIP');
+        const isStructured = summary || yourForm || tip;
+        return (
+          <View style={frameStyles.coachingBox}>
+            <Text style={frameStyles.coachingLabel}>🧠 Posture Coaching</Text>
+            {isStructured ? (
+              <>
+                {summary && <Text style={frameStyles.coachingText}>{summary}</Text>}
+                {yourForm && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={{ color: '#4d9fff', fontWeight: '700', fontSize: 12, marginBottom: 2 }}>YOUR FORM</Text>
+                    <Text style={frameStyles.coachingText}>{yourForm}</Text>
+                  </View>
+                )}
+                {reference && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={{ color: '#ff6b6b', fontWeight: '700', fontSize: 12, marginBottom: 2 }}>REFERENCE</Text>
+                    <Text style={frameStyles.coachingText}>{reference}</Text>
+                  </View>
+                )}
+                {tip && (
+                  <View style={{ marginTop: 10, backgroundColor: '#1a2a1a', borderRadius: 6, padding: 10 }}>
+                    <Text style={{ color: '#44cc88', fontWeight: '700', fontSize: 12, marginBottom: 2 }}>💡 TIP</Text>
+                    <Text style={[frameStyles.coachingText, { color: '#aaffcc' }]}>{tip}</Text>
+                  </View>
+                )}
+              </>
+            ) : (
+              <Text style={frameStyles.coachingText}>{text}</Text>
+            )}
+          </View>
+        );
+      })()}
     </View>
   );
 }
@@ -342,17 +378,55 @@ export default function ResultScreen({ route, navigation }: Props) {
         </View>
 
         {/* ── Frame-by-frame comparison ── */}
-        {result.comparison && result.comparison.frames && result.comparison.frames.length > 0 && (
-          <View style={styles.comparisonSection}>
-            <Text style={styles.comparisonTitle}>🔬 Frame-by-Frame Comparison</Text>
-            <Text style={styles.comparisonSub}>
-              DTW cost: {result.comparison.dtw_cost.toFixed(2)}  ·  {result.comparison.n_matched_frames} matched frames
-            </Text>
-            {result.comparison.frames.map((f, i) => (
-              <FrameCard key={i} frame={f} index={i} />
-            ))}
-          </View>
-        )}
+        {result.comparison && result.comparison.frames && result.comparison.frames.length > 0 && (() => {
+          // Compute median delta across all joints and all frames
+          const allDeltas: number[] = [];
+          result.comparison.frames.forEach((f: ComparisonFrame) => {
+            allDeltas.push(
+              Math.abs(f.right_knee_you - f.right_knee_ref),
+              Math.abs(f.left_knee_you  - f.left_knee_ref),
+              Math.abs(f.right_hip_you  - f.right_hip_ref),
+              Math.abs(f.left_hip_you   - f.left_hip_ref),
+            );
+          });
+          const sorted = [...allDeltas].sort((a, b) => a - b);
+          const medianDelta = sorted[Math.floor(sorted.length / 2)];
+          const videosNotSimilar = medianDelta > 20;
+
+          return (
+            <View style={styles.comparisonSection}>
+              <Text style={styles.comparisonTitle}>🔬 Frame-by-Frame Comparison</Text>
+              <Text style={styles.comparisonSub}>
+                DTW cost: {result.comparison.dtw_cost.toFixed(2)}  ·  {result.comparison.n_matched_frames} matched frames
+              </Text>
+
+              {/* Similarity warning banner */}
+              {videosNotSimilar && (
+                <View style={{
+                  backgroundColor: '#2d1010',
+                  borderLeftWidth: 4,
+                  borderLeftColor: '#ff4444',
+                  borderRadius: 8,
+                  padding: 14,
+                  marginBottom: 12,
+                }}>
+                  <Text style={{ color: '#ff4444', fontWeight: '700', fontSize: 15, marginBottom: 4 }}>
+                    ⚠️ Videos Are Not Similar
+                  </Text>
+                  <Text style={{ color: '#ffaaaa', fontSize: 13, lineHeight: 19 }}>
+                    The median joint angle difference is {medianDelta.toFixed(1)}° (threshold: 20°). 
+                    Your movement pattern differs significantly from the reference. 
+                    Try to match the pace, range of motion, and posture of the reference video.
+                  </Text>
+                </View>
+              )}
+
+              {result.comparison.frames.map((f: ComparisonFrame, i: number) => (
+                <FrameCard key={i} frame={f} index={i} />
+              ))}
+            </View>
+          );
+        })()}
 
         {/* Actions */}
         <View style={styles.actions}>
